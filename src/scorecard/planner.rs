@@ -110,7 +110,12 @@ impl ScorecardPlanner {
                 })?;
 
             let attempt_count = matched_round.attempt_count();
-            let event_display_name = event_name_by_id(&target.event_id)?;
+            let event_display_name = event_name_by_id(&target.event_id).ok_or_else(|| {
+                format!(
+                    "unknown or unsupported WCA event ID: '{}'",
+                    target.event_id
+                )
+            })?;
             let comp_name = comp.display_name();
 
             if target.is_open_round {
@@ -154,7 +159,7 @@ impl ScorecardPlanner {
                             round_number: target.round_number,
                             group_number: group_num,
                             competitor_name: person.name.as_str(),
-                            registrant_id: person.registrant_id,
+                            registrant_id: person.registrant_id(),
                             wca_id: person.wca_id.as_deref(),
                             attempt_count,
                             is_blank: false,

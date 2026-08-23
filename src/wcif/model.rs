@@ -26,20 +26,15 @@ impl Competition {
 
     /// Builds a map of activity ID -> activityCode (e.g. 101 -> "333-r1-g1") from the schedule.
     pub fn build_activity_map(&self) -> FxHashMap<usize, &str> {
-        let mut map = FxHashMap::default();
-        if let Some(ref schedule) = self.schedule {
-            for venue in &schedule.venues {
-                for room in &venue.rooms {
-                    for activity in &room.activities {
-                        map.insert(activity.id, activity.activity_code.as_str());
-                        for child in &activity.child_activities {
-                            map.insert(child.id, child.activity_code.as_str());
-                        }
-                    }
-                }
-            }
-        }
-        map
+        self.schedule
+            .as_ref()
+            .into_iter()
+            .flat_map(|s| &s.venues)
+            .flat_map(|v| &v.rooms)
+            .flat_map(|r| &r.activities)
+            .flat_map(|a| std::iter::once(a).chain(&a.child_activities))
+            .map(|a| (a.id, a.activity_code.as_str()))
+            .collect()
     }
 
     /// Finds and parses the Groupifier extension if present.
@@ -98,6 +93,14 @@ pub struct Person {
     pub assignments: Vec<Assignment>,
     #[serde(default)]
     pub personal_bests: Vec<PersonalBest>,
+}
+
+impl Person {
+    /// Resolves the registrant ID either from `person.registrantId` or `person.registration.id`.
+    pub fn registrant_id(&self) -> Option<usize> {
+        self.registrant_id
+            .or_else(|| self.registration.as_ref().and_then(|r| r.id))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

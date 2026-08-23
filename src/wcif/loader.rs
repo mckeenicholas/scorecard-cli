@@ -27,23 +27,38 @@ impl WcifLoader {
 
     /// Fetches the public WCIF JSON for a competition ID from the WCA API.
     pub fn fetch_from_wca(comp_id: &str) -> Result<Competition, Box<dyn Error>> {
-        let encoded_comp_id = urlencoding::encode(comp_id);
+        let spinner = crate::progress::create_spinner(format!(
+            "Fetching WCIF for '{}'...",
+            comp_id
+        ));
+
         let api_url = format!(
             "https://www.worldcubeassociation.org/api/v0/competitions/{}/wcif/public",
-            encoded_comp_id
+            comp_id
         );
 
-        let client = reqwest::blocking::Client::builder()
-            .user_agent("fast-scorecard-gen/0.1.0 (https://github.com)")
-            .build()?;
+        let client = match reqwest::blocking::Client::builder()
+            .user_agent("fast-scorecard-gen/0.1.0 (https://github.com/mckeenicholas/scorecard-cli)")
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                spinner.finish_and_clear();
+                return Err(e.into());
+            }
+        };
 
-        let resp = client
-            .get(&api_url)
-            .send()
-            .map_err(|e| format!("failed to fetch WCIF from WCA API: {}", e))?;
+        let resp = match client.get(&api_url).send() {
+            Ok(r) => r,
+            Err(e) => {
+                spinner.finish_and_clear();
+                return Err(format!("failed to fetch WCIF from WCA API: {}", e).into());
+            }
+        };
 
         let status = resp.status();
         if status == reqwest::StatusCode::NOT_FOUND {
+            spinner.finish_and_clear();
             return Err(format!(
                 "competition {} not found on WCA website (API returned 404)",
                 comp_id
@@ -52,33 +67,29 @@ impl WcifLoader {
         }
 
         if !status.is_success() {
+            spinner.finish_and_clear();
             return Err(format!("WCA API request failed with status: {}", status).into());
         }
 
-        let bytes = resp
-            .bytes()
-            .map_err(|e| format!("failed to read response bytes from WCA API: {}", e))?;
-        let comp: Competition = serde_json::from_slice(&bytes)
-            .map_err(|e| format!("failed to parse public WCIF JSON: {}", e))?;
+        spinner.set_message(format!("Downloading and parsing WCIF for '{}'...", comp_id));
 
-        Ok(comp)
-    }
-}
-
-// Simple urlencoding helper to avoid adding external dependencies
-mod urlencoding {
-    pub fn encode(input: &str) -> String {
-        let mut encoded = String::with_capacity(input.len());
-        for b in input.bytes() {
-            match b {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    encoded.push(b as char);
-                }
-                _ => {
-                    encoded.push_str(&format!("%{:02X}", b));
-                }
+        let bytes = match resp.bytes() {
+            Ok(b) => b,
+            Err(e) => {
+                spinner.finish_and_clear();
+                return Err(format!("failed to read response bytes from WCA API: {}", e).into());
             }
-        }
-        encoded
+        };
+
+        let comp: Competition = match serde_json::from_slice(&bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                spinner.finish_and_clear();
+                return Err(format!("failed to parse public WCIF JSON: {}", e).into());
+            }
+        };
+
+        spinner.finish_and_clear();
+        Ok(comp)
     }
 }

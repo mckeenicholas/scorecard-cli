@@ -1,5 +1,6 @@
 mod options;
 mod pdf;
+mod progress;
 mod scorecard;
 mod wcif;
 
@@ -16,7 +17,7 @@ use wcif::WcifLoader;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-const BUFFER_SIZE: usize = 16 * 1 << 20; // 16 MB
+const BUFFER_SIZE: usize = 16 * 1024 * 1024; // 16 MB
 
 fn main() {
     let cli = Cli::parse();
@@ -56,7 +57,6 @@ fn main() {
         return;
     }
 
-    println!("\nGenerating {} scorecards to PDF...", scorecards.len());
     let layout = PageLayout::from_paper_size(&active_opts.paper);
     let generator = PdfGenerator::new(layout);
 
@@ -70,10 +70,18 @@ fn main() {
     };
     let mut writer = BufWriter::with_capacity(BUFFER_SIZE, file);
 
+    let spinner = progress::create_spinner(format!(
+        "Generating {} scorecards to PDF ({})...",
+        scorecards.len(),
+        out_filename
+    ));
+
     if let Err(err) = generator.generate_to_writer(&comp, &scorecards, &mut writer) {
+        spinner.finish_and_clear();
         eprintln!("Error generating scorecards PDF: {}", err);
         process::exit(1);
     }
+    spinner.finish_and_clear();
 
     println!("Successfully generated scorecards PDF: {}", out_filename);
 }

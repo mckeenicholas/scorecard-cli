@@ -11,18 +11,14 @@ mod tests {
 
     #[test]
     fn test_event_name_by_id() {
-        assert_eq!(events::event_name_by_id("333").unwrap(), "3x3x3 Cube");
-        assert_eq!(events::event_name_by_id("222").unwrap(), "2x2x2 Cube");
+        assert_eq!(events::event_name_by_id("333"), Some("3x3x3 Cube"));
+        assert_eq!(events::event_name_by_id("222"), Some("2x2x2 Cube"));
         assert_eq!(
-            events::event_name_by_id("333bf").unwrap(),
-            "3x3x3 Blindfolded"
+            events::event_name_by_id("333bf"),
+            Some("3x3x3 Blindfolded")
         );
-        assert_eq!(events::event_name_by_id("sq1").unwrap(), "Square-1");
-        assert!(events::event_name_by_id("invalid_event").is_err());
-        assert_eq!(
-            events::event_name_by_id("invalid_event").unwrap_err(),
-            events::UnknownEventError("invalid_event".to_string())
-        );
+        assert_eq!(events::event_name_by_id("sq1"), Some("Square-1"));
+        assert_eq!(events::event_name_by_id("invalid_event"), None);
     }
 
     #[test]
