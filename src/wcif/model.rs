@@ -18,22 +18,45 @@ pub struct Competition {
     pub extensions: Vec<Extension>,
 }
 
+/// Scheduled activity info linking an activity code to its enclosing room/stage name.
+#[derive(Debug, Clone, Copy)]
+pub struct ScheduledActivityInfo<'a> {
+    pub activity_code: &'a str,
+    pub room_name: Option<&'a str>,
+}
+
 impl Competition {
     /// Returns the display name for the competition (short_name if available, else name).
     pub fn display_name(&self) -> &str {
         self.short_name.as_deref().unwrap_or(&self.name)
     }
 
-    /// Builds a map of activity ID -> activityCode (e.g. 101 -> "333-r1-g1") from the schedule.
-    pub fn build_activity_map(&self) -> FxHashMap<usize, &str> {
+    /// Builds a map of activity ID -> ScheduledActivityInfo (activity_code, room_name).
+    ///
+    /// NOTE: This traverses parent activities and their direct children (2 levels).
+    /// WCA WCIF nesting is typically: Round Activity -> Group Activity, so this covers
+    /// standard competition structures. Deeper nesting would require recursive traversal.
+    pub fn build_activity_schedule_map(&self) -> FxHashMap<usize, ScheduledActivityInfo<'_>> {
         self.schedule
             .as_ref()
             .into_iter()
             .flat_map(|s| &s.venues)
             .flat_map(|v| &v.rooms)
-            .flat_map(|r| &r.activities)
-            .flat_map(|a| std::iter::once(a).chain(&a.child_activities))
-            .map(|a| (a.id, a.activity_code.as_str()))
+            .flat_map(|r| {
+                let room_name = r.name.as_deref();
+                r.activities
+                    .iter()
+                    .flat_map(move |a| std::iter::once(a).chain(&a.child_activities))
+                    .map(move |a| {
+                        (
+                            a.id,
+                            ScheduledActivityInfo {
+                                activity_code: a.activity_code.as_str(),
+                                room_name,
+                            },
+                        )
+                    })
+            })
             .collect()
     }
 
@@ -161,7 +184,7 @@ pub struct Round {
     pub time_limit: Option<TimeLimit>,
     pub cutoff: Option<Cutoff>,
     pub advancement_condition: Option<AdvancementCondition>,
-    #[serde(default)]
+    #[serde(default, alias = "scrambleSetCount")]
     pub scramble_group_count: usize,
 }
 
@@ -197,6 +220,7 @@ pub struct Cutoff {
 pub struct AdvancementCondition {
     #[serde(rename = "type")]
     pub condition_type: String,
+    #[serde(alias = "level")]
     pub value: Option<f64>,
 }
 

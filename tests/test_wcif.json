@@ -72,7 +72,7 @@
           "scrambleSetCount": 2,
           "advancementCondition": {
             "type": "ranking",
-            "value": 2
+            "level": 2
           }
         },
         {

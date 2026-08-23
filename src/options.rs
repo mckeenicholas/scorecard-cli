@@ -1,5 +1,45 @@
+use crate::pdf::{PageFormat, PaperSize};
 use crate::wcif::GroupifierCompetitionConfig;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
+
+/// Sharding dimension for splitting output PDFs into separate files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShardBy {
+    #[value(name = "event", alias = "events", alias = "e")]
+    Event,
+    #[value(name = "group", alias = "groups", alias = "g")]
+    Group,
+    #[value(name = "stage", alias = "stages", alias = "room", alias = "rooms")]
+    Stage,
+}
+
+impl std::fmt::Display for ShardBy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShardBy::Event => write!(f, "event"),
+            ShardBy::Group => write!(f, "group"),
+            ShardBy::Stage => write!(f, "stage"),
+        }
+    }
+}
+
+impl std::str::FromStr for ShardBy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "event" | "events" | "e" => Ok(ShardBy::Event),
+            "group" | "groups" | "g" => Ok(ShardBy::Group),
+            "stage" | "stages" | "room" | "rooms" | "s" => Ok(ShardBy::Stage),
+            other => Err(format!(
+                "invalid shard criterion '{}': must be 'event', 'group', or 'stage'",
+                other
+            )),
+        }
+    }
+}
 
 /// Fast WCA Cubing Competition Scorecard Generator in Rust
 #[derive(Parser, Debug, Clone)]
@@ -17,24 +57,36 @@ pub struct Cli {
     #[arg(value_name = "EVENTS")]
     pub events: Vec<String>,
 
-    /// Set paper size (a4, letter, a6) [overrides WCIF]
+    /// Set paper size (a4, letter, a6)
     #[arg(
         short = 'p',
         long,
         visible_alias = "scorecard-paper-size",
+        value_enum,
         value_name = "PAPER"
     )]
-    pub paper: Option<String>,
+    pub paper: Option<PaperSize>,
 
     /// Set page layout format (group, stacked)
-    #[arg(short = 'f', long, value_name = "FORMAT")]
-    pub format: Option<String>,
+    #[arg(short = 'f', long, value_enum, value_name = "FORMAT")]
+    pub format: Option<PageFormat>,
 
-    /// Don't include CJK or accents (ASCII only)
+    /// Split scorecards into separate PDFs by event, group, stage, or a combination
+    #[arg(
+        short = 's',
+        long = "shard",
+        value_enum,
+        value_name = "SHARD",
+        value_delimiter = ',',
+        num_args = 1..
+    )]
+    pub shard: Option<Vec<ShardBy>>,
+
+    /// Don't include unicode characters
     #[arg(short = 'a', long)]
     pub ascii: bool,
 
-    /// Include/exclude cover sheets [true|false]
+    /// Include/exclude cover sheets
     #[arg(
         short = 'c',
         long,
@@ -45,11 +97,7 @@ pub struct Cli {
     )]
     pub cover_sheets: Option<bool>,
 
-    /// Set scorecard sorting order (natural, etc.)
-    #[arg(short = 'o', long, value_name = "ORDER")]
-    pub scorecard_order: Option<String>,
-
-    /// Display local names first [true|false]
+    /// Display local names first
     #[arg(
         short = 'l',
         long,
@@ -59,7 +107,7 @@ pub struct Cli {
     )]
     pub local_names_first: Option<bool>,
 
-    /// Only print one name [true|false]
+    /// Only print one name
     #[arg(
         short = 'n',
         long,
@@ -69,9 +117,8 @@ pub struct Cli {
     )]
     pub print_one_name: Option<bool>,
 
-    /// Print station numbers [true|false]
+    /// Print station numbers
     #[arg(
-        short = 's',
         long,
         num_args = 0..=1,
         default_missing_value = "true",
@@ -79,7 +126,7 @@ pub struct Cli {
     )]
     pub print_stations: Option<bool>,
 
-    /// Print scramble checker for top ranked competitors [true|false]
+    /// Print scramble checker for top ranked competitors
     #[arg(
         short = 't',
         long,
@@ -89,7 +136,7 @@ pub struct Cli {
     )]
     pub scramble_checker_top_ranked: Option<bool>,
 
-    /// Print scramble checker for final rounds [true|false]
+    /// Print scramble checker for final rounds
     #[arg(
         short = 'r',
         long,
@@ -99,7 +146,7 @@ pub struct Cli {
     )]
     pub scramble_checker_final_rounds: Option<bool>,
 
-    /// Print scramble checker for blank scorecards [true|false]
+    /// Print scramble checker for blank scorecards
     #[arg(
         short = 'b',
         long,
@@ -110,58 +157,31 @@ pub struct Cli {
     pub scramble_checker_blank: Option<bool>,
 }
 
-impl Cli {
-    /// Validates the CLI options and returns normalized paper & format values if valid.
-    pub fn validate(&self) -> Result<(), String> {
-        if let Some(ref p) = self.paper {
-            let lower = p.to_lowercase();
-            if lower != "a4" && lower != "letter" && lower != "a6" {
-                return Err(format!(
-                    "invalid paper size: {:?} (must be a4, letter, or a6)",
-                    p
-                ));
-            }
-        }
-
-        if let Some(ref f) = self.format {
-            let lower = f.to_lowercase();
-            if lower != "group" && lower != "stacked" {
-                return Err(format!(
-                    "invalid format: {:?} (must be group or stacked)",
-                    f
-                ));
-            }
-        }
-
-        Ok(())
-    }
-}
-
 /// Fully resolved scorecard generation options after merging CLI flags,
 /// WCIF Groupifier config extensions, and default values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedOptions {
-    pub paper: String,
-    pub format: String,
+    pub paper: PaperSize,
+    pub format: PageFormat,
     pub ascii: bool,
     pub cover_sheets: bool,
-    pub scorecard_order: String,
-    pub local_names_first: bool,
-    pub print_one_name: bool,
-    pub print_stations: bool,
-    pub scramble_checker_top_ranked: bool,
-    pub scramble_checker_final_rounds: bool,
-    pub scramble_checker_blank: bool,
+    pub shard: Vec<ShardBy>,
+    pub local_names_first: bool,             // TODO: wire to renderer
+    pub print_one_name: bool,                // TODO: wire to renderer
+    pub print_stations: bool,                // TODO: wire to renderer
+    pub scramble_checker_top_ranked: bool,   // TODO: wire to renderer
+    pub scramble_checker_final_rounds: bool, // TODO: wire to renderer
+    pub scramble_checker_blank: bool,        // TODO: wire to renderer
 }
 
 impl Default for ResolvedOptions {
     fn default() -> Self {
         Self {
-            paper: "letter".to_string(),
-            format: "group".to_string(),
+            paper: PaperSize::Letter,
+            format: PageFormat::Group,
             ascii: false,
             cover_sheets: true,
-            scorecard_order: "natural".to_string(),
+            shard: Vec::new(),
             local_names_first: false,
             print_one_name: false,
             print_stations: false,
@@ -185,15 +205,17 @@ impl ResolvedOptions {
 
         // Layer 1: WCIF Groupifier config
         if let Some(cfg) = groupifier {
-            apply(
-                &mut opts.paper,
-                cfg.scorecard_paper_size.clone().filter(|s| !s.is_empty()),
-            );
+            if let Some(ref p) = cfg.scorecard_paper_size
+                && let Ok(paper) = p.parse::<PaperSize>()
+            {
+                opts.paper = paper;
+            }
+            if let Some(ref o) = cfg.scorecard_order
+                && o.to_lowercase() == "stacked"
+            {
+                opts.format = PageFormat::Stacked;
+            }
             apply(&mut opts.cover_sheets, cfg.print_scorecards_cover_sheets);
-            apply(
-                &mut opts.scorecard_order,
-                cfg.scorecard_order.clone().filter(|s| !s.is_empty()),
-            );
             apply(&mut opts.local_names_first, cfg.local_names_first);
             apply(&mut opts.print_one_name, cfg.print_one_name);
             apply(&mut opts.print_stations, cfg.print_stations);
@@ -212,11 +234,16 @@ impl ResolvedOptions {
         }
 
         // Layer 2: Explicit CLI flag overrides
-        apply(&mut opts.paper, cli.paper.clone());
-        apply(&mut opts.format, cli.format.clone());
+        apply(&mut opts.paper, cli.paper);
+        apply(&mut opts.format, cli.format);
         opts.ascii = cli.ascii;
         apply(&mut opts.cover_sheets, cli.cover_sheets);
-        apply(&mut opts.scorecard_order, cli.scorecard_order.clone());
+        if let Some(ref s) = cli.shard {
+            opts.shard = s.clone();
+        }
+        // Deduplicate shard dimensions (e.g. --shard event,event)
+        opts.shard.sort_by_key(|s| *s as u8);
+        opts.shard.dedup();
         apply(&mut opts.local_names_first, cli.local_names_first);
         apply(&mut opts.print_one_name, cli.print_one_name);
         apply(&mut opts.print_stations, cli.print_stations);
@@ -236,11 +263,16 @@ impl ResolvedOptions {
     /// Prints a human-readable configuration summary table.
     pub fn print_summary(&self) {
         println!("\n--- Configuration Summary ---");
-        println!("Paper Size:                  {}", self.paper.to_uppercase());
+        println!("Paper Size:                  {}", self.paper);
         println!("Format:                      {}", self.format);
         println!("ASCII Only:                  {}", self.ascii);
         println!("Cover Sheets:                {}", self.cover_sheets);
-        println!("Scorecard Order:             {}", self.scorecard_order);
+        if self.shard.is_empty() {
+            println!("Shard By:                    (None - Single PDF)");
+        } else {
+            let shard_strs: Vec<String> = self.shard.iter().map(|s| s.to_string()).collect();
+            println!("Shard By:                    {}", shard_strs.join(", "));
+        }
         println!("Local Names First:           {}", self.local_names_first);
         println!("Print One Name:              {}", self.print_one_name);
         println!("Print Stations (Station #):  {}", self.print_stations);
@@ -270,7 +302,6 @@ mod tests {
         let cli = Cli::try_parse_from(args).unwrap();
         assert_eq!(cli.comp_source, "Comp2026");
         assert_eq!(cli.events, vec!["333", "333-2"]);
-        assert!(cli.validate().is_ok());
     }
 
     #[test]
@@ -283,24 +314,47 @@ mod tests {
             "-f",
             "group",
             "-a",
-            "-s",
+            "--print-stations",
             "--print-scorecards-cover-sheets",
             "false",
+            "-s",
+            "event,group",
         ];
         let cli = Cli::try_parse_from(args).unwrap();
-        assert_eq!(cli.paper, Some("a4".to_string()));
-        assert_eq!(cli.format, Some("group".to_string()));
+        assert_eq!(cli.paper, Some(PaperSize::A4));
+        assert_eq!(cli.format, Some(PageFormat::Group));
         assert!(cli.ascii);
         assert_eq!(cli.print_stations, Some(true));
         assert_eq!(cli.cover_sheets, Some(false));
-        assert!(cli.validate().is_ok());
+        assert_eq!(cli.shard, Some(vec![ShardBy::Event, ShardBy::Group]));
     }
 
     #[test]
     fn test_cli_invalid_paper() {
         let args = vec!["scorecard-gen", "Comp2026", "-p", "tabloid"];
+        let result = Cli::try_parse_from(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_invalid_format() {
+        let args = vec!["scorecard-gen", "Comp2026", "-f", "unknown_format"];
+        let result = Cli::try_parse_from(args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_shard_parsing() {
+        let args = vec!["scorecard-gen", "Comp2026", "-s", "event", "-s", "stage"];
         let cli = Cli::try_parse_from(args).unwrap();
-        assert!(cli.validate().is_err());
+        assert_eq!(cli.shard, Some(vec![ShardBy::Event, ShardBy::Stage]));
+
+        let args_comma = vec!["scorecard-gen", "Comp2026", "--shard", "stage,group,event"];
+        let cli_comma = Cli::try_parse_from(args_comma).unwrap();
+        assert_eq!(
+            cli_comma.shard,
+            Some(vec![ShardBy::Stage, ShardBy::Group, ShardBy::Event])
+        );
     }
 
     #[test]
@@ -309,15 +363,65 @@ mod tests {
         let groupifier = GroupifierCompetitionConfig {
             scorecard_paper_size: Some("a4".to_string()),
             print_stations: Some(true),
+            scorecard_order: Some("stacked".to_string()),
             ..Default::default()
         };
 
         let resolved = ResolvedOptions::resolve(&cli, Some(&groupifier));
         // CLI "-p letter" overrides groupifier "a4"
-        assert_eq!(resolved.paper, "letter");
+        assert_eq!(resolved.paper, PaperSize::Letter);
         // Groupifier print_stations applies
         assert!(resolved.print_stations);
+        // Groupifier stacked order applies
+        assert_eq!(resolved.format, PageFormat::Stacked);
         // Default cover_sheets remains true
         assert!(resolved.cover_sheets);
+    }
+
+    #[test]
+    fn test_shard_by_display_and_parsing() {
+        assert_eq!("event".parse::<ShardBy>(), Ok(ShardBy::Event));
+        assert_eq!("events".parse::<ShardBy>(), Ok(ShardBy::Event));
+        assert_eq!("group".parse::<ShardBy>(), Ok(ShardBy::Group));
+        assert_eq!("groups".parse::<ShardBy>(), Ok(ShardBy::Group));
+        assert_eq!("stage".parse::<ShardBy>(), Ok(ShardBy::Stage));
+        assert_eq!("stages".parse::<ShardBy>(), Ok(ShardBy::Stage));
+        assert_eq!("room".parse::<ShardBy>(), Ok(ShardBy::Stage));
+        assert_eq!("rooms".parse::<ShardBy>(), Ok(ShardBy::Stage));
+        assert!("invalid".parse::<ShardBy>().is_err());
+
+        assert_eq!(ShardBy::Event.to_string(), "event");
+        assert_eq!(ShardBy::Group.to_string(), "group");
+        assert_eq!(ShardBy::Stage.to_string(), "stage");
+    }
+
+    #[test]
+    fn test_resolved_options_boolean_flag_overrides() {
+        let cli = Cli::try_parse_from(vec![
+            "scorecard-gen",
+            "Comp2026",
+            "--print-scorecards-cover-sheets",
+            "false",
+            "--local-names-first",
+            "true",
+            "--print-one-name",
+            "true",
+            "--print-stations",
+            "false",
+        ])
+        .unwrap();
+
+        let groupifier = GroupifierCompetitionConfig {
+            print_scorecards_cover_sheets: Some(true),
+            print_stations: Some(true),
+            local_names_first: Some(false),
+            ..Default::default()
+        };
+
+        let resolved = ResolvedOptions::resolve(&cli, Some(&groupifier));
+        assert!(!resolved.cover_sheets);
+        assert!(resolved.local_names_first);
+        assert!(resolved.print_one_name);
+        assert!(!resolved.print_stations);
     }
 }

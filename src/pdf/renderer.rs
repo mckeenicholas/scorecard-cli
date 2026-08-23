@@ -6,12 +6,44 @@ use printpdf::ops::{Op, PdfFontHandle};
 use printpdf::text::TextItem;
 use printpdf::units::Pt;
 
+/// Text alignment within a scorecard cell or bounding box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextAlign {
     Left,
     Center,
 }
 
+/// Visual theme and geometric styling parameters for scorecard rendering.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScorecardTheme {
+    pub padding: f32,
+    pub border_thickness: f32,
+    pub header_bg_grey: f32,
+    pub grid_line_grey: f32,
+    pub grid_line_thickness: f32,
+    pub title_font_size: f32,
+    pub header_font_size: f32,
+    pub cell_font_size: f32,
+    pub comp_name_font_size: f32,
+}
+
+/// Default styling theme matching official WCA competition scorecard aesthetics.
+pub const DEFAULT_THEME: ScorecardTheme = ScorecardTheme {
+    padding: 7.0,
+    border_thickness: 0.75,
+    header_bg_grey: 0.92,
+    grid_line_grey: 0.55,
+    grid_line_thickness: 0.5,
+    title_font_size: 11.0,
+    header_font_size: 7.5,
+    cell_font_size: 8.0,
+    comp_name_font_size: 9.5,
+};
+
+/// Column specification for grid tables (header label, width ratio [0.0..1.0], text alignment).
+pub type ColumnDef<'a> = (&'a str, f32, TextAlign);
+
+/// Specification for rendering a structured grid table.
 pub struct TableSpec<'a> {
     pub tbl_x: f32,
     pub tbl_w: f32,
@@ -23,6 +55,7 @@ pub struct TableSpec<'a> {
     pub row_h: f32,
 }
 
+/// Specification for rendering text with alignment and font styling.
 pub struct TextSpec<'a> {
     pub text: &'a str,
     pub cell_x: f32,
@@ -40,7 +73,7 @@ macro_rules! make_attempt_table {
             $(
                 &[$num, "", "", "", ""],
             )*
-    &["Extra", "", "", "", ""],
+            &["Extra", "", "", "", ""],
         ]
     };
 }
@@ -50,79 +83,228 @@ const ATTEMPT_ROWS_3: [&[&str]; 4] = make_attempt_table!("1", "2", "3");
 const ATTEMPT_ROWS_2: [&[&str]; 3] = make_attempt_table!("1", "2");
 const ATTEMPT_ROWS_1: [&[&str]; 2] = make_attempt_table!("1");
 
+const ATTEMPT_COLUMNS: [ColumnDef<'static>; 5] = [
+    ("Attempt", 0.16, TextAlign::Center),
+    ("Scr", 0.15, TextAlign::Center),
+    ("Result", 0.39, TextAlign::Center),
+    ("Judge", 0.15, TextAlign::Center),
+    ("Comp", 0.15, TextAlign::Center),
+];
+
+/// Canvas abstraction managing vertical flow, bounding geometry, and rendering primitives for a scorecard.
+pub struct CardPainter<'a> {
+    pub ops: &'a mut Vec<Op>,
+    pub theme: &'a ScorecardTheme,
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub inner_x: f32,
+    pub inner_w: f32,
+    pub cur_y: f32,
+    pub min_y: f32,
+}
+
+impl<'a> CardPainter<'a> {
+    pub fn new(
+        ops: &'a mut Vec<Op>,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        theme: &'a ScorecardTheme,
+    ) -> Self {
+        let pad = theme.padding;
+        let inner_x = x + pad;
+        let inner_w = w - 2.0 * pad;
+        let top_y = y + h;
+        let cur_y = top_y - pad;
+        let min_y = y + pad;
+
+        Self {
+            ops,
+            theme,
+            x,
+            y,
+            w,
+            h,
+            inner_x,
+            inner_w,
+            cur_y,
+            min_y,
+        }
+    }
+
+    /// Advances the vertical cursor downward by `dy` points.
+    #[inline]
+    pub fn advance_y(&mut self, dy: f32) {
+        self.cur_y -= dy;
+    }
+
+    /// Draws the outer scorecard bounding box border.
+    pub fn draw_outer_border(&mut self) {
+        self.ops.push(Op::SetOutlineColor {
+            col: Color::Greyscale(Greyscale::new(0.0, None)),
+        });
+        self.ops.push(Op::SetOutlineThickness {
+            pt: Pt(self.theme.border_thickness),
+        });
+        self.ops.push(Op::DrawRectangle {
+            rectangle: Rect {
+                x: Pt(self.x),
+                y: Pt(self.y),
+                width: Pt(self.w),
+                height: Pt(self.h),
+                mode: Some(PaintMode::Stroke),
+                winding_order: None,
+            },
+        });
+    }
+
+    /// Draws the top header: scorecard number in top-left corner and competition name centered.
+    pub fn draw_top_header(&mut self, scorecard_number: usize, comp_name: &str) {
+        self.advance_y(10.0);
+
+        if scorecard_number > 0 {
+            let mut num_buf = itoa::Buffer::new();
+            let num_str = num_buf.format(scorecard_number);
+            TextDrawer::draw(
+                self.ops,
+                TextSpec {
+                    text: num_str,
+                    cell_x: self.inner_x,
+                    baseline_y: self.cur_y,
+                    cell_w: 40.0,
+                    font_size: self.theme.title_font_size,
+                    bold: true,
+                    align: TextAlign::Left,
+                },
+            );
+        }
+
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: comp_name,
+                cell_x: self.inner_x,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w,
+                font_size: self.theme.comp_name_font_size,
+                bold: true,
+                align: TextAlign::Center,
+            },
+        );
+
+        self.advance_y(7.0);
+    }
+
+    /// Draws a structured grid table with specified column ratios, header height, and row height.
+    pub fn draw_grid_table(
+        &mut self,
+        header_h: f32,
+        row_h: f32,
+        columns: &[ColumnDef<'_>],
+        rows: &[&[&str]],
+    ) {
+        let mut col_widths = [0.0f32; 8];
+        let mut headers = [""; 8];
+        let mut alignments = [TextAlign::Center; 8];
+        let col_count = columns.len().min(8);
+
+        for (i, &(header, ratio, align)) in columns.iter().take(col_count).enumerate() {
+            col_widths[i] = self.inner_w * ratio;
+            headers[i] = header;
+            alignments[i] = align;
+        }
+
+        TableDrawer::draw(
+            self.ops,
+            &mut self.cur_y,
+            TableSpec {
+                tbl_x: self.inner_x,
+                tbl_w: self.inner_w,
+                col_widths: &col_widths[..col_count],
+                headers: &headers[..col_count],
+                rows,
+                alignments: &alignments[..col_count],
+                header_h,
+                row_h,
+            },
+            self.theme,
+        );
+    }
+
+    /// Draws the attempt table dynamically sized to fill the remaining scorecard height, plus bottom cutoff/time limit footer.
+    pub fn draw_attempt_table(&mut self, attempt_count: usize, time_limit_info: Option<&str>) {
+        self.advance_y(5.0);
+        let header_h = 12.0;
+
+        match attempt_count {
+            5 => self.draw_attempt_rows(&ATTEMPT_ROWS_5, header_h, time_limit_info),
+            3 => self.draw_attempt_rows(&ATTEMPT_ROWS_3, header_h, time_limit_info),
+            2 => self.draw_attempt_rows(&ATTEMPT_ROWS_2, header_h, time_limit_info),
+            1 => self.draw_attempt_rows(&ATTEMPT_ROWS_1, header_h, time_limit_info),
+            count => {
+                let attempt_str_pool: Vec<String> = (1..=count).map(|i| i.to_string()).collect();
+                let mut dynamic_row_storage: Vec<[&str; 5]> = Vec::with_capacity(count + 1);
+                for s in &attempt_str_pool {
+                    dynamic_row_storage.push([s.as_str(), "", "", "", ""]);
+                }
+                dynamic_row_storage.push(["Extra", "", "", "", ""]);
+
+                let dynamic_rows: Vec<&[&str]> =
+                    dynamic_row_storage.iter().map(|r| r.as_slice()).collect();
+                self.draw_attempt_rows(&dynamic_rows, header_h, time_limit_info);
+            }
+        }
+    }
+
+    fn draw_attempt_rows(
+        &mut self,
+        rows: &[&[&str]],
+        header_h: f32,
+        time_limit_info: Option<&str>,
+    ) {
+        let footer_reserve = if time_limit_info.is_some() { 10.0 } else { 0.0 };
+        let available_h = self.cur_y - self.min_y - footer_reserve;
+        let row_count = rows.len() as f32;
+        let row_h = ((available_h - header_h) / row_count).clamp(13.5, 18.5);
+        self.draw_grid_table(header_h, row_h, &ATTEMPT_COLUMNS, rows);
+
+        if let Some(info) = time_limit_info {
+            let footer_y = (self.cur_y + self.min_y) / 2.0 - 2.0;
+            TextDrawer::draw(
+                self.ops,
+                TextSpec {
+                    text: info,
+                    cell_x: self.inner_x,
+                    baseline_y: footer_y,
+                    cell_w: self.inner_w,
+                    font_size: 7.0,
+                    bold: false,
+                    align: TextAlign::Center,
+                },
+            );
+        }
+    }
+}
+
 /// Renderer for drawing scorecard elements and vector primitives to a PDF page instruction stream.
 pub struct ScorecardRenderer;
 
 impl ScorecardRenderer {
     /// Draws a complete scorecard within the given bounding rectangle (x, y, w, h).
     pub fn draw_card(ops: &mut Vec<Op>, card: &ScorecardItem<'_>, x: f32, y: f32, w: f32, h: f32) {
-        let top_y = y + h;
-        let pad = 7.0;
-        let inner_x = x + pad;
-        let inner_w = w - 2.0 * pad;
+        let mut painter = CardPainter::new(ops, x, y, w, h, &DEFAULT_THEME);
 
-        // 1. Outer scorecard boundary box
-        ops.push(Op::SetOutlineColor {
-            col: Color::Greyscale(Greyscale::new(0.0, None)),
-        });
-        ops.push(Op::SetOutlineThickness { pt: Pt(0.75) });
-        ops.push(Op::DrawRectangle {
-            rectangle: Rect {
-                x: Pt(x),
-                y: Pt(y),
-                width: Pt(w),
-                height: Pt(h),
-                mode: Some(PaintMode::Stroke),
-                winding_order: None,
-            },
-        });
+        // 1. Outer boundary box
+        painter.draw_outer_border();
 
-        let mut cur_y = top_y - pad;
-
-        // 2. Competition title header
+        // 2. Top header: number in top-left, competition name centered
         let comp_name = card.truncated_competition_name(30);
-        cur_y -= 10.0;
-        TextDrawer::draw(
-            ops,
-            TextSpec {
-                text: &comp_name,
-                cell_x: inner_x,
-                baseline_y: cur_y,
-                cell_w: inner_w,
-                font_size: 9.5,
-                bold: true,
-                align: TextAlign::Center,
-            },
-        );
+        painter.draw_top_header(card.scorecard_number, &comp_name);
 
-        // 3. Scorecard title header (e.g. SCORECARD #1)
-        cur_y -= 13.0;
-        let mut card_num_buf = itoa::Buffer::new();
-        let card_title = if card.scorecard_number == 0 {
-            "SCORECARD".to_string()
-        } else {
-            let num_str = card_num_buf.format(card.scorecard_number);
-            let mut s = String::with_capacity(11 + num_str.len());
-            s.push_str("SCORECARD #");
-            s.push_str(num_str);
-            s
-        };
-
-        TextDrawer::draw(
-            ops,
-            TextSpec {
-                text: &card_title,
-                cell_x: inner_x,
-                baseline_y: cur_y,
-                cell_w: inner_w,
-                font_size: 11.0,
-                bold: true,
-                align: TextAlign::Center,
-            },
-        );
-
-        // 4. Table 1: Event / Round / Group / Station
-        cur_y -= 7.0;
+        // 3. Table 1: Event / Round / Group / Station
         let mut station_buf = itoa::Buffer::new();
         let station_val = card
             .station_number
@@ -135,188 +317,39 @@ impl ScorecardRenderer {
         let mut group_buf = itoa::Buffer::new();
         let group_str = group_buf.format(card.group_number);
 
-        let t1_col_widths = [
-            inner_w * 0.38,
-            inner_w * 0.20,
-            inner_w * 0.20,
-            inner_w * 0.22,
-        ];
-        let t1_headers = ["Event", "Round", "Group", "Station"];
-        let t1_row: [&str; 4] = [card.event_name, round_str, group_str, station_val];
-        let t1_rows: [&[&str]; 1] = [&t1_row];
-        let t1_align = [
-            TextAlign::Left,
-            TextAlign::Center,
-            TextAlign::Center,
-            TextAlign::Center,
-        ];
-        TableDrawer::draw(
-            ops,
-            &mut cur_y,
-            TableSpec {
-                tbl_x: inner_x,
-                tbl_w: inner_w,
-                col_widths: &t1_col_widths,
-                headers: &t1_headers,
-                rows: &t1_rows,
-                alignments: &t1_align,
-                header_h: 12.0,
-                row_h: 13.0,
-            },
+        painter.draw_grid_table(
+            12.0,
+            13.0,
+            &[
+                ("Event", 0.38, TextAlign::Left),
+                ("Round", 0.20, TextAlign::Center),
+                ("Group", 0.20, TextAlign::Center),
+                ("Station", 0.22, TextAlign::Center),
+            ],
+            &[&[card.event_name, round_str, group_str, station_val]],
         );
 
-        // 5. Table 2: ID / Competitor Name
-        cur_y -= 5.0;
+        // 4. Table 2: ID / Competitor Name
+        painter.advance_y(5.0);
         let mut id_buf = itoa::Buffer::new();
         let id_val = card
             .registrant_id
             .map(|id| id_buf.format(id))
             .unwrap_or("-");
         let name_val = card.display_competitor_name();
-        let t2_col_widths = [inner_w * 0.20, inner_w * 0.80];
-        let t2_headers = ["ID", "Competitor Name"];
-        let t2_row: [&str; 2] = [id_val, &name_val];
-        let t2_rows: [&[&str]; 1] = [&t2_row];
-        let t2_align = [TextAlign::Center, TextAlign::Left];
-        TableDrawer::draw(
-            ops,
-            &mut cur_y,
-            TableSpec {
-                tbl_x: inner_x,
-                tbl_w: inner_w,
-                col_widths: &t2_col_widths,
-                headers: &t2_headers,
-                rows: &t2_rows,
-                alignments: &t2_align,
-                header_h: 12.0,
-                row_h: 14.0,
-            },
+
+        painter.draw_grid_table(
+            12.0,
+            14.0,
+            &[
+                ("ID", 0.20, TextAlign::Center),
+                ("Competitor Name", 0.80, TextAlign::Left),
+            ],
+            &[&[id_val, &name_val]],
         );
 
-        // 6. Table 3: Attempt Log
-        cur_y -= 5.0;
-        let t3_col_widths = [
-            inner_w * 0.16,
-            inner_w * 0.15,
-            inner_w * 0.39,
-            inner_w * 0.15,
-            inner_w * 0.15,
-        ];
-        let t3_headers = ["Attempt", "Scr", "Result", "Judge", "Comp"];
-        let t3_align = [
-            TextAlign::Center,
-            TextAlign::Center,
-            TextAlign::Center,
-            TextAlign::Center,
-            TextAlign::Center,
-        ];
-
-        let header_h = 12.0;
-
-        match card.attempt_count {
-            5 => {
-                let available_attempt_h = cur_y - (y + pad);
-                let t3_row_h = ((available_attempt_h - header_h) / 6.0).clamp(14.0, 18.5);
-                TableDrawer::draw(
-                    ops,
-                    &mut cur_y,
-                    TableSpec {
-                        tbl_x: inner_x,
-                        tbl_w: inner_w,
-                        col_widths: &t3_col_widths,
-                        headers: &t3_headers,
-                        rows: &ATTEMPT_ROWS_5,
-                        alignments: &t3_align,
-                        header_h,
-                        row_h: t3_row_h,
-                    },
-                );
-            }
-            3 => {
-                let available_attempt_h = cur_y - (y + pad);
-                let t3_row_h = ((available_attempt_h - header_h) / 4.0).clamp(14.0, 18.5);
-                TableDrawer::draw(
-                    ops,
-                    &mut cur_y,
-                    TableSpec {
-                        tbl_x: inner_x,
-                        tbl_w: inner_w,
-                        col_widths: &t3_col_widths,
-                        headers: &t3_headers,
-                        rows: &ATTEMPT_ROWS_3,
-                        alignments: &t3_align,
-                        header_h,
-                        row_h: t3_row_h,
-                    },
-                );
-            }
-            2 => {
-                let available_attempt_h = cur_y - (y + pad);
-                let t3_row_h = ((available_attempt_h - header_h) / 3.0).clamp(14.0, 18.5);
-                TableDrawer::draw(
-                    ops,
-                    &mut cur_y,
-                    TableSpec {
-                        tbl_x: inner_x,
-                        tbl_w: inner_w,
-                        col_widths: &t3_col_widths,
-                        headers: &t3_headers,
-                        rows: &ATTEMPT_ROWS_2,
-                        alignments: &t3_align,
-                        header_h,
-                        row_h: t3_row_h,
-                    },
-                );
-            }
-            1 => {
-                let available_attempt_h = cur_y - (y + pad);
-                let t3_row_h = ((available_attempt_h - header_h) / 2.0).clamp(14.0, 18.5);
-                TableDrawer::draw(
-                    ops,
-                    &mut cur_y,
-                    TableSpec {
-                        tbl_x: inner_x,
-                        tbl_w: inner_w,
-                        col_widths: &t3_col_widths,
-                        headers: &t3_headers,
-                        rows: &ATTEMPT_ROWS_1,
-                        alignments: &t3_align,
-                        header_h,
-                        row_h: t3_row_h,
-                    },
-                );
-            }
-            count => {
-                let attempt_str_pool: Vec<String> = (1..=count).map(|i| i.to_string()).collect();
-                let mut dynamic_row_storage: Vec<[&str; 5]> = Vec::with_capacity(count + 1);
-                for s in &attempt_str_pool {
-                    dynamic_row_storage.push([s.as_str(), "", "", "", ""]);
-                }
-                dynamic_row_storage.push(["Extra", "", "", "", ""]);
-
-                let dynamic_rows: Vec<&[&str]> =
-                    dynamic_row_storage.iter().map(|r| r.as_slice()).collect();
-
-                let available_attempt_h = cur_y - (y + pad);
-                let row_count = dynamic_rows.len() as f32;
-                let t3_row_h = ((available_attempt_h - header_h) / row_count).clamp(14.0, 18.5);
-
-                TableDrawer::draw(
-                    ops,
-                    &mut cur_y,
-                    TableSpec {
-                        tbl_x: inner_x,
-                        tbl_w: inner_w,
-                        col_widths: &t3_col_widths,
-                        headers: &t3_headers,
-                        rows: &dynamic_rows,
-                        alignments: &t3_align,
-                        header_h,
-                        row_h: t3_row_h,
-                    },
-                );
-            }
-        }
+        // 5. Table 3: Attempt Log and bottom Cutoff / Time limit info
+        painter.draw_attempt_table(card.attempt_count, card.time_limit_info.as_deref());
     }
 }
 
@@ -324,14 +357,14 @@ impl ScorecardRenderer {
 pub struct TableDrawer;
 
 impl TableDrawer {
-    pub fn draw(ops: &mut Vec<Op>, cur_y: &mut f32, spec: TableSpec<'_>) {
+    pub fn draw(ops: &mut Vec<Op>, cur_y: &mut f32, spec: TableSpec<'_>, theme: &ScorecardTheme) {
         let top_y = *cur_y;
         let total_h = spec.header_h + spec.row_h * (spec.rows.len() as f32);
         let bottom_y = top_y - total_h;
 
         // 1. Header background fill
         ops.push(Op::SetFillColor {
-            col: Color::Greyscale(Greyscale::new(0.92, None)),
+            col: Color::Greyscale(Greyscale::new(theme.header_bg_grey, None)),
         });
         ops.push(Op::DrawRectangle {
             rectangle: Rect {
@@ -348,7 +381,8 @@ impl TableDrawer {
         let mut col_x = spec.tbl_x;
         for (i, &header) in spec.headers.iter().enumerate() {
             let w = spec.col_widths[i];
-            let text_y = top_y - spec.header_h + (spec.header_h - 7.5) / 2.0 + 1.0;
+            let text_y =
+                top_y - spec.header_h + (spec.header_h - theme.header_font_size) / 2.0 + 1.0;
             let align = spec.alignments.get(i).copied().unwrap_or(TextAlign::Center);
             TextDrawer::draw(
                 ops,
@@ -357,7 +391,7 @@ impl TableDrawer {
                     cell_x: col_x,
                     baseline_y: text_y,
                     cell_w: w,
-                    font_size: 7.5,
+                    font_size: theme.header_font_size,
                     bold: true,
                     align,
                 },
@@ -369,7 +403,7 @@ impl TableDrawer {
         let mut row_top = top_y - spec.header_h;
         for &row in spec.rows {
             let mut cell_x = spec.tbl_x;
-            let text_y = row_top - spec.row_h + (spec.row_h - 8.0) / 2.0 + 1.0;
+            let text_y = row_top - spec.row_h + (spec.row_h - theme.cell_font_size) / 2.0 + 1.0;
             for (i, &cell) in row.iter().enumerate() {
                 let w = spec.col_widths[i];
                 let align = spec.alignments.get(i).copied().unwrap_or(TextAlign::Center);
@@ -380,7 +414,7 @@ impl TableDrawer {
                         cell_x,
                         baseline_y: text_y,
                         cell_w: w,
-                        font_size: 8.0,
+                        font_size: theme.cell_font_size,
                         bold: false,
                         align,
                     },
@@ -392,9 +426,11 @@ impl TableDrawer {
 
         // 4. Grid lines (Borders)
         ops.push(Op::SetOutlineColor {
-            col: Color::Greyscale(Greyscale::new(0.55, None)),
+            col: Color::Greyscale(Greyscale::new(theme.grid_line_grey, None)),
         });
-        ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
+        ops.push(Op::SetOutlineThickness {
+            pt: Pt(theme.grid_line_thickness),
+        });
 
         // Outer table border
         ops.push(Op::DrawRectangle {
@@ -434,6 +470,9 @@ impl TableDrawer {
         *cur_y = bottom_y;
     }
 
+    /// Draws a line between two points.
+    /// NOTE: Each call allocates a small Vec for `LinePoint`s — this is a printpdf API
+    /// requirement. For scorecard grids the count is bounded and the cost is negligible.
     fn draw_line(ops: &mut Vec<Op>, x1: f32, y1: f32, x2: f32, y2: f32) {
         ops.push(Op::DrawLine {
             line: Line {
@@ -502,9 +541,8 @@ impl TextDrawer {
 
     /// Approximates proportional Helvetica font character widths for centering.
     pub fn estimate_width(text: &str, font_size: f32) -> f32 {
-        let mut w = 0.0;
-        for ch in text.chars() {
-            let factor = match ch {
+        text.chars()
+            .map(|ch| match ch {
                 ' ' => 0.28,
                 '.' | ',' | ':' | ';' | '!' | '|' | '\'' | '`' | 'i' | 'j' | 'l' | 'I' => 0.26,
                 'f' | 't' | '(' | ')' | '[' | ']' | '{' | '}' => 0.32,
@@ -513,9 +551,63 @@ impl TextDrawer {
                 'A'..='Z' => 0.62,
                 '0'..='9' => 0.55,
                 _ => 0.50,
-            };
-            w += factor * font_size;
-        }
-        w
+            })
+            .sum::<f32>()
+            * font_size
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scorecard::ScorecardItem;
+
+    #[test]
+    fn test_estimate_width() {
+        let w_space = TextDrawer::estimate_width(" ", 10.0);
+        assert!((w_space - 2.8).abs() < 0.01);
+
+        let w_digits = TextDrawer::estimate_width("12345", 10.0);
+        assert!((w_digits - 27.5).abs() < 0.01);
+
+        let w_empty = TextDrawer::estimate_width("", 10.0);
+        assert_eq!(w_empty, 0.0);
+    }
+
+    #[test]
+    fn test_draw_card_operations() {
+        let card = ScorecardItem {
+            scorecard_number: 1,
+            station_number: Some(4),
+            competition_name: "Test Comp 2026",
+            event_id: "333",
+            event_name: "3x3x3 Cube",
+            round_number: 1,
+            group_number: 1,
+            stage_name: Some("Red Stage"),
+            competitor_name: "Alice Smith",
+            registrant_id: Some(1),
+            wca_id: Some("2022SMIT01"),
+            attempt_count: 5,
+            time_limit_info: Some("Time limit: 10:00.00".to_string()),
+            is_blank: false,
+        };
+
+        let mut ops = Vec::new();
+        ScorecardRenderer::draw_card(&mut ops, &card, 18.0, 18.0, 270.0, 380.0);
+
+        // Verify that operations were generated (borders, rects, text items)
+        assert!(!ops.is_empty());
+        let has_rectangles = ops.iter().any(|op| matches!(op, Op::DrawRectangle { .. }));
+        let has_text = ops.iter().any(|op| matches!(op, Op::ShowText { .. }));
+        assert!(has_rectangles);
+        assert!(has_text);
+    }
+
+    #[test]
+    fn test_theme_defaults() {
+        assert_eq!(DEFAULT_THEME.padding, 7.0);
+        assert_eq!(DEFAULT_THEME.border_thickness, 0.75);
+        assert!(DEFAULT_THEME.title_font_size > DEFAULT_THEME.header_font_size);
     }
 }

@@ -3,7 +3,7 @@ pub mod layout;
 pub mod renderer;
 
 pub use generator::PdfGenerator;
-pub use layout::PageLayout;
+pub use layout::{PageFormat, PageLayout, PaperSize};
 
 #[cfg(test)]
 mod tests {
@@ -33,10 +33,12 @@ mod tests {
                 event_name: "3x3x3 Cube",
                 round_number: 1,
                 group_number: 1,
+                stage_name: Some("Main Stage"),
                 competitor_name: "Alice Smith",
                 registrant_id: Some(1),
                 wca_id: Some("2022SMIT01"),
                 attempt_count: 5,
+                time_limit_info: Some("Time limit: 10:00.00".to_string()),
                 is_blank: false,
             },
             ScorecardItem {
@@ -47,10 +49,12 @@ mod tests {
                 event_name: "3x3x3 Cube",
                 round_number: 2,
                 group_number: 1,
+                stage_name: None,
                 competitor_name: "",
                 registrant_id: None,
                 wca_id: None,
                 attempt_count: 5,
+                time_limit_info: None,
                 is_blank: true,
             },
         ];
@@ -75,5 +79,15 @@ mod tests {
             .expect("a6 generation failed");
         assert!(!pdf_a6.is_empty());
         assert!(pdf_a6.starts_with(b"%PDF-"));
+
+        let gen_stacked = PdfGenerator::with_format(
+            PageLayout::new(layout::PaperSize::A4),
+            layout::PageFormat::Stacked,
+        );
+        let pdf_stacked = gen_stacked
+            .generate(&comp, &cards)
+            .expect("stacked generation failed");
+        assert!(!pdf_stacked.is_empty());
+        assert!(pdf_stacked.starts_with(b"%PDF-"));
     }
 }

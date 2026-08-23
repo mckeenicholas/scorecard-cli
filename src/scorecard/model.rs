@@ -11,11 +11,38 @@ pub struct ScorecardItem<'a> {
     pub event_name: &'static str,
     pub round_number: usize,
     pub group_number: usize,
+    pub stage_name: Option<&'a str>,
     pub competitor_name: &'a str,
     pub registrant_id: Option<usize>,
     pub wca_id: Option<&'a str>,
     pub attempt_count: usize,
+    /// Note: `time_limit_info` is cloned per card within a round. All cards in the same
+    /// round share the same value, so an `Arc<str>` could avoid per-card allocations if
+    /// performance on very large competitions becomes a concern.
+    pub time_limit_info: Option<String>,
     pub is_blank: bool,
+}
+
+#[cfg(test)]
+impl Default for ScorecardItem<'static> {
+    fn default() -> Self {
+        Self {
+            scorecard_number: 1,
+            station_number: Some(1),
+            competition_name: "Test Comp",
+            event_id: "333",
+            event_name: "3x3x3 Cube",
+            round_number: 1,
+            group_number: 1,
+            stage_name: Some("Main Stage"),
+            competitor_name: "Alice",
+            registrant_id: Some(1),
+            wca_id: None,
+            attempt_count: 5,
+            time_limit_info: None,
+            is_blank: false,
+        }
+    }
 }
 
 impl<'a> ScorecardItem<'a> {

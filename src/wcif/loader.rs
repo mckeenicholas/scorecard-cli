@@ -27,69 +27,54 @@ impl WcifLoader {
 
     /// Fetches the public WCIF JSON for a competition ID from the WCA API.
     pub fn fetch_from_wca(comp_id: &str) -> Result<Competition, Box<dyn Error>> {
-        let spinner = crate::progress::create_spinner(format!(
-            "Fetching WCIF for '{}'...",
-            comp_id
-        ));
+        let spinner =
+            crate::progress::create_spinner(format!("Fetching WCIF for '{}'...", comp_id));
+        let res = Self::fetch_wcif_from_api(comp_id, &spinner);
+        spinner.finish_and_clear();
+        res
+    }
 
+    fn fetch_wcif_from_api(
+        comp_id: &str,
+        spinner: &indicatif::ProgressBar,
+    ) -> Result<Competition, Box<dyn Error>> {
         let api_url = format!(
             "https://www.worldcubeassociation.org/api/v0/competitions/{}/wcif/public",
             comp_id
         );
 
-        let client = match reqwest::blocking::Client::builder()
+        // Client is rebuilt per request - acceptable for a single-fetch CLI.
+        // If retries or batch fetching are added, then we shoud consider reusing the client.
+        let client = reqwest::blocking::Client::builder()
             .user_agent("fast-scorecard-gen/0.1.0 (https://github.com/mckeenicholas/scorecard-cli)")
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                spinner.finish_and_clear();
-                return Err(e.into());
-            }
-        };
+            .build()?;
 
-        let resp = match client.get(&api_url).send() {
-            Ok(r) => r,
-            Err(e) => {
-                spinner.finish_and_clear();
-                return Err(format!("failed to fetch WCIF from WCA API: {}", e).into());
-            }
-        };
+        let resp = client
+            .get(&api_url)
+            .send()
+            .map_err(|e| format!("failed to fetch WCIF from WCA API: {}", e))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::NOT_FOUND {
-            spinner.finish_and_clear();
             return Err(format!(
                 "competition {} not found on WCA website (API returned 404)",
                 comp_id
             )
             .into());
         }
-
         if !status.is_success() {
-            spinner.finish_and_clear();
             return Err(format!("WCA API request failed with status: {}", status).into());
         }
 
         spinner.set_message(format!("Downloading and parsing WCIF for '{}'...", comp_id));
 
-        let bytes = match resp.bytes() {
-            Ok(b) => b,
-            Err(e) => {
-                spinner.finish_and_clear();
-                return Err(format!("failed to read response bytes from WCA API: {}", e).into());
-            }
-        };
+        let bytes = resp
+            .bytes()
+            .map_err(|e| format!("failed to read response bytes from WCA API: {}", e))?;
 
-        let comp: Competition = match serde_json::from_slice(&bytes) {
-            Ok(c) => c,
-            Err(e) => {
-                spinner.finish_and_clear();
-                return Err(format!("failed to parse public WCIF JSON: {}", e).into());
-            }
-        };
+        let comp: Competition = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("failed to parse public WCIF JSON: {}", e))?;
 
-        spinner.finish_and_clear();
         Ok(comp)
     }
 }

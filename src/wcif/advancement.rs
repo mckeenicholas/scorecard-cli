@@ -7,75 +7,316 @@ pub struct AdvancementResult {
     pub reason: String,
 }
 
+fn default_result(reason: impl Into<String>) -> AdvancementResult {
+    AdvancementResult {
+        blank_count: 16,
+        reason: reason.into(),
+    }
+}
+
 /// Calculator for round advancement rules (ranking cutoff, percentage advancement, etc.).
 pub struct AdvancementCalculator;
 
 impl AdvancementCalculator {
     /// Calculates the number of blank scorecards needed for a subsequent round based on WCA rules.
     pub fn calculate_blanks(comp: &Competition, event: &Event, round: &Round) -> AdvancementResult {
-        // Find previous round of this event to calculate advancement
-        let prev_round = event
-            .rounds
-            .iter()
-            .position(|r| r.id == round.id)
-            .and_then(|idx| {
-                if idx > 0 {
-                    event.rounds.get(idx - 1)
-                } else {
-                    None
-                }
-            });
+        let round_idx = event.rounds.iter().position(|r| r.id == round.id);
+        let prev_idx = round_idx.and_then(|idx| idx.checked_sub(1));
 
-        if let Some(prev) = prev_round {
-            if let Some(ref cond) = prev.advancement_condition {
-                match cond.condition_type.as_str() {
-                    "ranking" => {
-                        let val = cond.value.unwrap_or(16.0) as usize;
-                        AdvancementResult {
-                            blank_count: val,
-                            reason: format!(
-                                "based on ranking advancement limit of top {} from previous round",
-                                val
-                            ),
-                        }
-                    }
-                    "percent" => {
-                        let percent = cond.value.unwrap_or(75.0);
-                        let prev_competitors = comp.count_competitors_for_event(&event.id);
-                        let calculated =
-                            (prev_competitors as f64 * percent / 100.0).round() as usize;
-                        AdvancementResult {
-                            blank_count: calculated,
-                            reason: format!(
-                                "based on percentage advancement limit of {}% of {} competitors ({} blanks)",
-                                percent, prev_competitors, calculated
-                            ),
-                        }
-                    }
-                    "attemptResult" => AdvancementResult {
-                        blank_count: 16,
-                        reason: "cutoff-based advancement, defaulted to 16 blanks".to_string(),
-                    },
-                    _ => AdvancementResult {
-                        blank_count: 16,
-                        reason: format!(
-                            "advancement condition type {:?}, defaulted to 16 blanks",
-                            cond.condition_type
-                        ),
-                    },
-                }
-            } else {
+        let Some(prev_idx) = prev_idx else {
+            return default_result("no previous round found, defaulted to 16 blanks");
+        };
+
+        let prev = &event.rounds[prev_idx];
+        let Some(ref cond) = prev.advancement_condition else {
+            return default_result(
+                "no previous round advancement condition found, defaulted to 16 blanks",
+            );
+        };
+
+        match cond.condition_type.as_str() {
+            "ranking" => {
+                let val = cond.value.unwrap_or(16.0) as usize;
+                let pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
+                let capped = val.min(pool);
                 AdvancementResult {
-                    blank_count: 16,
-                    reason: "no previous round advancement condition found, defaulted to 16 blanks"
-                        .to_string(),
+                    blank_count: capped,
+                    reason: format!(
+                        "based on ranking advancement limit of top {} from previous round",
+                        capped
+                    ),
                 }
             }
-        } else {
-            AdvancementResult {
-                blank_count: 16,
-                reason: "no previous round found, defaulted to 16 blanks".to_string(),
+            "percent" => {
+                let percent = cond.value.unwrap_or(75.0);
+                let prev_pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
+                let calculated = (prev_pool as f64 * percent / 100.0).round() as usize;
+                AdvancementResult {
+                    blank_count: calculated,
+                    reason: format!(
+                        "based on percentage advancement of {}% of ~{} competitors ({} blanks)",
+                        percent, prev_pool, calculated
+                    ),
+                }
             }
+            "attemptResult" => default_result("cutoff-based advancement, defaulted to 16 blanks"),
+            other => default_result(format!(
+                "advancement condition type {:?}, defaulted to 16 blanks",
+                other
+            )),
         }
+    }
+
+    /// Estimates how many competitors will be in a given round (by index).
+    /// Round 0 uses total accepted registrants; subsequent rounds chain advancement conditions.
+    fn estimate_competitors_in_round(comp: &Competition, event: &Event, round_idx: usize) -> usize {
+        if round_idx == 0 {
+            return comp.count_competitors_for_event(&event.id);
+        }
+        let prev_round = &event.rounds[round_idx - 1];
+        let prev_pool = Self::estimate_competitors_in_round(comp, event, round_idx - 1);
+        match prev_round.advancement_condition.as_ref() {
+            Some(cond) => match cond.condition_type.as_str() {
+                "ranking" => (cond.value.unwrap_or(16.0) as usize).min(prev_pool),
+                "percent" => {
+                    (prev_pool as f64 * cond.value.unwrap_or(75.0) / 100.0).round() as usize
+                }
+                _ => prev_pool.min(16),
+            },
+            None => prev_pool.min(16),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wcif::model::{AdvancementCondition, Person, Registration};
+
+    fn make_test_comp() -> Competition {
+        Competition {
+            format_version: Some("1.0".to_string()),
+            id: "TestComp".to_string(),
+            name: "Test Competition".to_string(),
+            short_name: None,
+            persons: vec![
+                Person {
+                    registrant_id: Some(1),
+                    name: "Competitor 1".to_string(),
+                    wca_id: None,
+                    country_iso2: None,
+                    gender: None,
+                    registration: Some(Registration {
+                        id: Some(1),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![],
+                    personal_bests: vec![],
+                },
+                Person {
+                    registrant_id: Some(2),
+                    name: "Competitor 2".to_string(),
+                    wca_id: None,
+                    country_iso2: None,
+                    gender: None,
+                    registration: Some(Registration {
+                        id: Some(2),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![],
+                    personal_bests: vec![],
+                },
+                Person {
+                    registrant_id: Some(3),
+                    name: "Competitor 3".to_string(),
+                    wca_id: None,
+                    country_iso2: None,
+                    gender: None,
+                    registration: Some(Registration {
+                        id: Some(3),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![],
+                    personal_bests: vec![],
+                },
+                Person {
+                    registrant_id: Some(4),
+                    name: "Competitor 4".to_string(),
+                    wca_id: None,
+                    country_iso2: None,
+                    gender: None,
+                    registration: Some(Registration {
+                        id: Some(4),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![],
+                    personal_bests: vec![],
+                },
+            ],
+            events: vec![],
+            schedule: None,
+            extensions: vec![],
+        }
+    }
+
+    #[test]
+    fn test_advancement_ranking() {
+        let comp = make_test_comp(); // 4 competitors
+        let event = Event {
+            id: "333".to_string(),
+            rounds: vec![
+                Round {
+                    id: "333-r1".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: Some(AdvancementCondition {
+                        condition_type: "ranking".to_string(),
+                        value: Some(3.0),
+                    }),
+                    scramble_group_count: 1,
+                },
+                Round {
+                    id: "333-r2".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                },
+            ],
+            competitor_limit: None,
+            qualification: None,
+        };
+
+        let result = AdvancementCalculator::calculate_blanks(&comp, &event, &event.rounds[1]);
+        assert_eq!(result.blank_count, 3);
+        assert!(result.reason.contains("top 3"));
+
+        // When ranking limit exceeds pool size, cap at pool size
+        let event_over = Event {
+            id: "333".to_string(),
+            rounds: vec![
+                Round {
+                    id: "333-r1".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: Some(AdvancementCondition {
+                        condition_type: "ranking".to_string(),
+                        value: Some(12.0),
+                    }),
+                    scramble_group_count: 1,
+                },
+                Round {
+                    id: "333-r2".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                },
+            ],
+            competitor_limit: None,
+            qualification: None,
+        };
+
+        let result_capped =
+            AdvancementCalculator::calculate_blanks(&comp, &event_over, &event_over.rounds[1]);
+        assert_eq!(result_capped.blank_count, 4); // capped at 4 competitors
+    }
+
+    #[test]
+    fn test_advancement_percent() {
+        let comp = make_test_comp();
+        let event = Event {
+            id: "333".to_string(),
+            rounds: vec![
+                Round {
+                    id: "333-r1".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: Some(AdvancementCondition {
+                        condition_type: "percent".to_string(),
+                        value: Some(50.0),
+                    }),
+                    scramble_group_count: 1,
+                },
+                Round {
+                    id: "333-r2".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                },
+            ],
+            competitor_limit: None,
+            qualification: None,
+        };
+
+        let result = AdvancementCalculator::calculate_blanks(&comp, &event, &event.rounds[1]);
+        // 50% of 4 competitors = 2
+        assert_eq!(result.blank_count, 2);
+        assert!(result.reason.contains("50%"));
+    }
+
+    #[test]
+    fn test_advancement_fallbacks() {
+        let comp = make_test_comp();
+        let event_no_condition = Event {
+            id: "333".to_string(),
+            rounds: vec![
+                Round {
+                    id: "333-r1".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                },
+                Round {
+                    id: "333-r2".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                },
+            ],
+            competitor_limit: None,
+            qualification: None,
+        };
+
+        let result_no_cond = AdvancementCalculator::calculate_blanks(
+            &comp,
+            &event_no_condition,
+            &event_no_condition.rounds[1],
+        );
+        assert_eq!(result_no_cond.blank_count, 16);
+
+        let result_first_round = AdvancementCalculator::calculate_blanks(
+            &comp,
+            &event_no_condition,
+            &event_no_condition.rounds[0],
+        );
+        assert_eq!(result_first_round.blank_count, 16);
     }
 }

@@ -1,4 +1,4 @@
-use super::layout::PageLayout;
+use super::layout::{PageFormat, PageLayout};
 use super::renderer::ScorecardRenderer;
 use crate::scorecard::ScorecardItem;
 use crate::wcif::Competition;
@@ -13,12 +13,22 @@ use std::io::Write;
 /// Generator responsible for parallel page chunking, scorecard rendering, and final PDF byte serialization.
 pub struct PdfGenerator {
     pub layout: PageLayout,
+    pub format: PageFormat,
 }
 
 impl PdfGenerator {
-    /// Creates a new PdfGenerator with the specified layout.
+    /// Creates a new PdfGenerator with the specified layout and default group format.
+    #[cfg(test)]
     pub fn new(layout: PageLayout) -> Self {
-        Self { layout }
+        Self {
+            layout,
+            format: PageFormat::Group,
+        }
+    }
+
+    /// Creates a new PdfGenerator with specified layout and format.
+    pub fn with_format(layout: PageLayout, format: PageFormat) -> Self {
+        Self { layout, format }
     }
 
     /// Generates a PDF containing all scorecards and streams directly to any Write destination (e.g. BufWriter<File>).
@@ -29,21 +39,49 @@ impl PdfGenerator {
         writer: &mut W,
     ) -> Result<(), Box<dyn Error>> {
         let layout = self.layout;
+        let format = self.format;
 
         // Parallel chunk processing across CPU cores with Rayon
-        let pages: Vec<PdfPage> = cards
-            .par_chunks(layout.cards_per_page)
-            .map(|chunk| {
-                let mut ops = Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });
+        let pages: Vec<PdfPage> = if format == PageFormat::Stacked && layout.cards_per_page > 1 {
+            let total_cards = cards.len();
+            let k = layout.cards_per_page;
+            let total_pages = total_cards.div_ceil(k);
 
-                for (idx, card) in chunk.iter().enumerate() {
-                    let rect = layout.card_rect(idx);
-                    ScorecardRenderer::draw_card(&mut ops, card, rect.x, rect.y, rect.w, rect.h);
-                }
+            (0..total_pages)
+                .into_par_iter()
+                .map(|page_idx| {
+                    let mut ops = Vec::with_capacity(256);
+                    for slot in 0..k {
+                        let card_idx = slot * total_pages + page_idx;
+                        if card_idx < total_cards {
+                            let card = &cards[card_idx];
+                            let rect = layout.card_rect(slot);
+                            ScorecardRenderer::draw_card(
+                                &mut ops, card, rect.x, rect.y, rect.w, rect.h,
+                            );
+                        }
+                    }
+                    PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
+                })
+                .collect()
+        } else {
+            cards
+                .par_chunks(layout.cards_per_page)
+                .map(|chunk| {
+                    let mut ops =
+                        Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });
 
-                PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
-            })
-            .collect();
+                    for (idx, card) in chunk.iter().enumerate() {
+                        let rect = layout.card_rect(idx);
+                        ScorecardRenderer::draw_card(
+                            &mut ops, card, rect.x, rect.y, rect.w, rect.h,
+                        );
+                    }
+
+                    PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
+                })
+                .collect()
+        };
 
         let mut doc = PdfDocument::new(&comp.name);
         doc.pages = pages;
