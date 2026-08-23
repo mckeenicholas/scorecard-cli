@@ -35,10 +35,12 @@ impl TimeLimitInfo {
         if centis <= 0 {
             return "None".to_string();
         }
+
         let total_seconds = centis / 100;
         let cs = centis % 100;
         let minutes = total_seconds / 60;
         let seconds = total_seconds % 60;
+
         if minutes > 0 {
             if cs > 0 {
                 format!("{}:{:02}.{:02}", minutes, seconds, cs)
@@ -124,18 +126,121 @@ impl Default for ScorecardItem<'static> {
 }
 
 impl<'a> ScorecardItem<'a> {
-    /// Returns formatted competitor name, including WCA ID or new competitor marker.
-    pub fn display_competitor_name(&self) -> Cow<'_, str> {
+    /// Creates a competitor scorecard item for an open round.
+    #[allow(clippy::too_many_arguments)]
+    pub fn competitor(
+        competition_name: &'a str,
+        event_id: &'a str,
+        event_name: &'static str,
+        round_number: usize,
+        group_number: usize,
+        stage_name: Option<&'a str>,
+        competitor_name: &'a str,
+        registrant_id: Option<usize>,
+        wca_id: Option<&'a str>,
+        station_number: Option<usize>,
+        attempt_count: usize,
+        time_limit_info: Option<TimeLimitInfo>,
+    ) -> Self {
+        Self {
+            scorecard_number: 0,
+            station_number,
+            competition_name,
+            event_id,
+            event_name,
+            round_number,
+            group_number,
+            stage_name,
+            competitor_name,
+            registrant_id,
+            wca_id,
+            attempt_count,
+            time_limit_info,
+            is_blank: false,
+            is_cover_sheet: false,
+            total_group_cards: 0,
+        }
+    }
+
+    /// Creates a cover sheet item to precede a group's scorecards.
+    #[allow(clippy::too_many_arguments)]
+    pub fn cover_sheet(
+        competition_name: &'a str,
+        event_id: &'a str,
+        event_name: &'static str,
+        round_number: usize,
+        group_number: usize,
+        stage_name: Option<&'a str>,
+        attempt_count: usize,
+        total_group_cards: usize,
+    ) -> Self {
+        Self {
+            scorecard_number: 0,
+            station_number: None,
+            competition_name,
+            event_id,
+            event_name,
+            round_number,
+            group_number,
+            stage_name,
+            competitor_name: "",
+            registrant_id: None,
+            wca_id: None,
+            attempt_count,
+            time_limit_info: None,
+            is_blank: false,
+            is_cover_sheet: true,
+            total_group_cards,
+        }
+    }
+
+    /// Creates a blank scorecard item for a subsequent round.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blank(
+        competition_name: &'a str,
+        event_id: &'a str,
+        event_name: &'static str,
+        round_number: usize,
+        group_number: usize,
+        stage_name: Option<&'a str>,
+        attempt_count: usize,
+        time_limit_info: Option<TimeLimitInfo>,
+    ) -> Self {
+        Self {
+            scorecard_number: 0,
+            station_number: None,
+            competition_name,
+            event_id,
+            event_name,
+            round_number,
+            group_number,
+            stage_name,
+            competitor_name: "",
+            registrant_id: None,
+            wca_id: None,
+            attempt_count,
+            time_limit_info,
+            is_blank: true,
+            is_cover_sheet: false,
+            total_group_cards: 0,
+        }
+    }
+
+    /// Returns formatted competitor name.
+    pub fn display_competitor_name(&self) -> &str {
         if self.is_blank {
-            Cow::Borrowed("[ Blank Scorecard ]")
-        } else if let Some(wca_id) = self.wca_id {
-            if !wca_id.is_empty() {
-                Cow::Owned(format!("{} ({})", self.competitor_name, wca_id))
-            } else {
-                Cow::Owned(format!("{} (New Competitor)", self.competitor_name))
-            }
+            "[ Blank Scorecard ]"
         } else {
-            Cow::Owned(format!("{} (New Competitor)", self.competitor_name))
+            self.competitor_name
+        }
+    }
+
+    /// Returns WCA ID string or empty string if none.
+    pub fn display_wca_id(&self) -> &str {
+        if self.is_blank {
+            ""
+        } else {
+            self.wca_id.unwrap_or("")
         }
     }
 
@@ -174,6 +279,41 @@ pub enum PlannedRoundSummary {
         blank_count: usize,
         reason: String,
     },
+}
+
+impl PlannedRoundSummary {
+    /// Formats the round summary into human-readable text for console output.
+    pub fn format(&self) -> String {
+        match self {
+            Self::OpenRound {
+                event_id,
+                round_number,
+                competitor_count,
+                sample_competitor_names,
+            } => {
+                let mut s = format!(
+                    "[{event_id} Round {round_number}] (Open Round) -> Generating scorecards for {competitor_count} accepted competitors\n"
+                );
+                if *competitor_count <= 5 && *competitor_count > 0 {
+                    s.push_str(&format!(
+                        "   Competitors: {}\n",
+                        sample_competitor_names.join(", ")
+                    ));
+                }
+                s
+            }
+            Self::SubsequentRound {
+                event_id,
+                round_number,
+                blank_count,
+                reason,
+            } => {
+                format!(
+                    "[{event_id} Round {round_number}] (Subsequent Round) -> Generating {blank_count} blank scorecards ({reason})\n"
+                )
+            }
+        }
+    }
 }
 
 /// ScorecardPlan contains all generated scorecard items along with round summaries and diagnostic notes.
@@ -221,34 +361,7 @@ impl<'a> ScorecardPlan<'a> {
         }
         out.push_str("\n--- Scorecard Generation Plan ---\n");
         for summary in &self.summaries {
-            match summary {
-                PlannedRoundSummary::OpenRound {
-                    event_id,
-                    round_number,
-                    competitor_count,
-                    sample_competitor_names,
-                } => {
-                    out.push_str(&format!(
-                        "[{event_id} Round {round_number}] (Open Round) -> Generating scorecards for {competitor_count} accepted competitors\n"
-                    ));
-                    if *competitor_count <= 5 && *competitor_count > 0 {
-                        out.push_str(&format!(
-                            "   Competitors: {}\n",
-                            sample_competitor_names.join(", ")
-                        ));
-                    }
-                }
-                PlannedRoundSummary::SubsequentRound {
-                    event_id,
-                    round_number,
-                    blank_count,
-                    reason,
-                } => {
-                    out.push_str(&format!(
-                        "[{event_id} Round {round_number}] (Subsequent Round) -> Generating {blank_count} blank scorecards ({reason})\n"
-                    ));
-                }
-            }
+            out.push_str(&summary.format());
         }
         out.push_str("---------------------------------");
         out

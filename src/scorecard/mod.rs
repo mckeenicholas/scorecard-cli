@@ -45,12 +45,50 @@ mod tests {
             total_group_cards: 0,
         };
 
-        assert_eq!(item.display_competitor_name(), "Alice Smith (2022SMIT01)");
+        assert_eq!(item.display_competitor_name(), "Alice Smith");
+        assert_eq!(item.display_wca_id(), "2022SMIT01");
         assert_eq!(item.truncated_competition_name(20), "Very Long Competi...");
         assert_eq!(
             item.formatted_time_limit_info(),
             Some("Cutoff: < 1:00.00 (2 att)  |  Time limit: 5:00.00".to_string())
         );
+    }
+
+    #[test]
+    fn test_sort_group_cards_station_and_name() {
+        let card1 = ScorecardItem {
+            competitor_name: "Zack",
+            station_number: Some(2),
+            ..Default::default()
+        };
+        let card2 = ScorecardItem {
+            competitor_name: "Alice",
+            station_number: Some(1),
+            ..Default::default()
+        };
+        let card3 = ScorecardItem {
+            competitor_name: "Charlie",
+            station_number: None,
+            ..Default::default()
+        };
+        let card4 = ScorecardItem {
+            competitor_name: "Bob",
+            station_number: None,
+            ..Default::default()
+        };
+
+        let mut cards = vec![card1, card2, card3, card4];
+        planner::sort_group_cards(&mut cards);
+
+        // Station numbers first: 1 (Alice), then 2 (Zack), then no station sorted alphabetically: Bob, Charlie
+        assert_eq!(cards[0].competitor_name, "Alice");
+        assert_eq!(cards[0].station_number, Some(1));
+        assert_eq!(cards[1].competitor_name, "Zack");
+        assert_eq!(cards[1].station_number, Some(2));
+        assert_eq!(cards[2].competitor_name, "Bob");
+        assert_eq!(cards[2].station_number, None);
+        assert_eq!(cards[3].competitor_name, "Charlie");
+        assert_eq!(cards[3].station_number, None);
     }
 
     #[test]
@@ -265,7 +303,7 @@ mod tests {
         };
 
         // Plan Round 1
-        let cards_r1 = ScorecardPlanner::plan(&comp, &["333-r1".to_string()], false).unwrap();
+        let cards_r1 = ScorecardPlanner::plan(&comp, &["333-r1".to_string()], false, &[]).unwrap();
         assert_eq!(cards_r1.len(), 1);
         let card1 = &cards_r1[0];
         assert_eq!(card1.scorecard_number, 1);
@@ -289,7 +327,7 @@ mod tests {
         );
 
         // Plan Round 2 (advancement blanks)
-        let cards_r2 = ScorecardPlanner::plan(&comp, &["333-r2".to_string()], false).unwrap();
+        let cards_r2 = ScorecardPlanner::plan(&comp, &["333-r2".to_string()], false, &[]).unwrap();
         assert_eq!(cards_r2.len(), 1);
         let blank_card = &cards_r2[0];
         assert_eq!(blank_card.scorecard_number, 1);
@@ -301,6 +339,7 @@ mod tests {
 
     #[test]
     fn test_planner_with_cover_sheets() {
+        use crate::options::ShardBy;
         use crate::wcif::model::{
             Activity, Assignment, Competition, Event, Person, Registration, Room, Round, Schedule,
             Venue,
@@ -401,8 +440,14 @@ mod tests {
             extensions: vec![],
         };
 
-        // When cover sheets are enabled:
-        let plan = ScorecardPlanner::plan(&comp, &["333-r1".to_string()], true).unwrap();
+        // When cover sheets are enabled with Stage, Event, Group bundling:
+        let plan = ScorecardPlanner::plan(
+            &comp,
+            &["333-r1".to_string()],
+            true,
+            &[ShardBy::Stage, ShardBy::Event, ShardBy::Group],
+        )
+        .unwrap();
         // 1 cover sheet + 2 competitor cards = 3 items
         assert_eq!(plan.len(), 3);
 
@@ -425,6 +470,17 @@ mod tests {
         assert!(!card2.is_cover_sheet);
         assert_eq!(card2.scorecard_number, 2);
         assert_eq!(card2.competitor_name, "Bob Jones");
+
+        // When cover sheets are bundled by Event only (no stage, no group):
+        let plan_event =
+            ScorecardPlanner::plan(&comp, &["333-r1".to_string()], true, &[ShardBy::Event])
+                .unwrap();
+        assert_eq!(plan_event.len(), 3);
+        let cover_event = &plan_event[0];
+        assert!(cover_event.is_cover_sheet);
+        assert_eq!(cover_event.group_number, 0);
+        assert_eq!(cover_event.stage_name, None);
+        assert_eq!(cover_event.total_group_cards, 2);
     }
 
     #[test]

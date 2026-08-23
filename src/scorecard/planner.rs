@@ -1,5 +1,6 @@
 use super::events::event_name_by_id;
 use super::model::{PlannedRoundSummary, ScorecardItem, ScorecardPlan, TimeLimitInfo};
+use crate::options::ShardBy;
 use crate::wcif::{
     AdvancementCalculator, Competition, Event, Person, Round, ScheduledActivityInfo,
 };
@@ -77,19 +78,25 @@ struct RoundPlanningContext<'a, 'b> {
     attempt_count: usize,
     activity_map: &'b FxHashMap<usize, ScheduledActivityInfo<'a>>,
     cover_sheets: bool,
+    cover_sheet_shard: &'b [ShardBy],
 }
 
-fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardPlan<'a>) {
+type GroupKey<'a> = (Option<&'a str>, usize);
+type GroupMap<'a> = std::collections::BTreeMap<GroupKey<'a>, Vec<ScorecardItem<'a>>>;
+
+fn collect_open_round_competitors<'a>(
+    ctx: &RoundPlanningContext<'a, '_>,
+) -> (GroupMap<'a>, usize, Vec<String>) {
     let target_prefix = format!("{}-g", ctx.target.round_id);
     let comp_name = ctx.comp.display_name();
     let time_limit_info =
         TimeLimitInfo::from_wcif(ctx.round.time_limit.as_ref(), ctx.round.cutoff.as_ref());
     let mut count = 0;
     let mut sample_names = Vec::new();
+    let mut groups = GroupMap::new();
 
-    // Group cards deterministically by (stage_name, group_number)
-    let mut groups: std::collections::BTreeMap<(Option<&'a str>, usize), Vec<ScorecardItem<'a>>> =
-        std::collections::BTreeMap::new();
+    let has_stage = ctx.cover_sheet_shard.contains(&ShardBy::Stage);
+    let has_group = ctx.cover_sheet_shard.contains(&ShardBy::Group);
 
     for person in ctx.comp.accepted_competitors_for_event(&ctx.event.id) {
         count += 1;
@@ -100,61 +107,77 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
         let (group_num, station_num, stage_name) =
             resolve_assignment(person, ctx.activity_map, &target_prefix);
 
-        let item = ScorecardItem {
-            scorecard_number: 0,
-            station_number: station_num,
-            competition_name: comp_name,
-            event_id: &ctx.event.id,
-            event_name: ctx.event_name,
-            round_number: ctx.target.round_number,
-            group_number: group_num,
+        let item = ScorecardItem::competitor(
+            comp_name,
+            &ctx.event.id,
+            ctx.event_name,
+            ctx.target.round_number,
+            group_num,
             stage_name,
-            competitor_name: person.name.as_str(),
-            registrant_id: person.registrant_id(),
-            wca_id: person.wca_id.as_deref(),
-            attempt_count: ctx.attempt_count,
+            person.name.as_str(),
+            person.registrant_id(),
+            person.wca_id.as_deref(),
+            station_num,
+            ctx.attempt_count,
             time_limit_info,
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        };
+        );
+
+        let bundle_stage = if has_stage { stage_name } else { None };
+        let bundle_group = if has_group { group_num } else { 0 };
 
         groups
-            .entry((stage_name, group_num))
+            .entry((bundle_stage, bundle_group))
             .or_default()
             .push(item);
     }
 
-    for ((stage_name, group_num), mut card_list) in groups {
-        // Sort cards within group by station_number, then competitor_name
-        card_list.sort_by(|a, b| {
-            a.station_number
-                .cmp(&b.station_number)
-                .then_with(|| a.competitor_name.cmp(b.competitor_name))
-        });
+    (groups, count, sample_names)
+}
 
-        if ctx.cover_sheets && !card_list.is_empty() {
-            plan.items.push(ScorecardItem {
-                scorecard_number: 0,
-                station_number: None,
-                competition_name: comp_name,
-                event_id: &ctx.event.id,
-                event_name: ctx.event_name,
-                round_number: ctx.target.round_number,
-                group_number: group_num,
-                stage_name,
-                competitor_name: "",
-                registrant_id: None,
-                wca_id: None,
-                attempt_count: ctx.attempt_count,
-                time_limit_info: None,
-                is_blank: false,
-                is_cover_sheet: true,
-                total_group_cards: card_list.len(),
-            });
-        }
+/// Sorts cards within a group:
+/// 1. Cards with station numbers come first, sorted by station number ascending.
+/// 2. Cards without station numbers (or sharing the same station number) are sorted alphabetically by competitor name.
+pub fn sort_group_cards(cards: &mut [ScorecardItem<'_>]) {
+    cards.sort_by(|a, b| match (a.station_number, b.station_number) {
+        (Some(s_a), Some(s_b)) => s_a
+            .cmp(&s_b)
+            .then_with(|| a.competitor_name.cmp(b.competitor_name)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.competitor_name.cmp(b.competitor_name),
+    });
+}
 
-        plan.items.extend(card_list);
+fn append_open_round_bundle<'a>(
+    bundle_stage: Option<&'a str>,
+    bundle_group: usize,
+    mut card_list: Vec<ScorecardItem<'a>>,
+    ctx: &RoundPlanningContext<'a, '_>,
+    plan: &mut ScorecardPlan<'a>,
+) {
+    sort_group_cards(&mut card_list);
+
+    if ctx.cover_sheets && !card_list.is_empty() {
+        plan.items.push(ScorecardItem::cover_sheet(
+            ctx.comp.display_name(),
+            &ctx.event.id,
+            ctx.event_name,
+            ctx.target.round_number,
+            bundle_group,
+            bundle_stage,
+            ctx.attempt_count,
+            card_list.len(),
+        ));
+    }
+
+    plan.items.extend(card_list);
+}
+
+fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardPlan<'a>) {
+    let (bundles, count, sample_names) = collect_open_round_competitors(ctx);
+
+    for ((bundle_stage, bundle_group), card_list) in bundles {
+        append_open_round_bundle(bundle_stage, bundle_group, card_list, ctx, plan);
     }
 
     plan.summaries.push(PlannedRoundSummary::OpenRound {
@@ -165,11 +188,8 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
     });
 }
 
-fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardPlan<'a>) {
-    let adv_result = AdvancementCalculator::calculate_blanks(ctx.comp, ctx.event, ctx.round);
-
-    let round_stage = ctx
-        .activity_map
+fn resolve_round_stage<'a>(ctx: &RoundPlanningContext<'a, '_>) -> Option<&'a str> {
+    ctx.activity_map
         .values()
         .find(|info| {
             info.activity_code == ctx.target.round_id
@@ -177,52 +197,51 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
                     .activity_code
                     .starts_with(&format!("{}-g", ctx.target.round_id))
         })
-        .and_then(|info| info.room_name);
+        .and_then(|info| info.room_name)
+}
 
+fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardPlan<'a>) {
+    let adv_result = AdvancementCalculator::calculate_blanks(ctx.comp, ctx.event, ctx.round);
+    let round_stage = resolve_round_stage(ctx);
     let comp_name = ctx.comp.display_name();
     let time_limit_info =
         TimeLimitInfo::from_wcif(ctx.round.time_limit.as_ref(), ctx.round.cutoff.as_ref());
 
+    let bundle_stage = if ctx.cover_sheet_shard.contains(&ShardBy::Stage) {
+        round_stage
+    } else {
+        None
+    };
+    let bundle_group = if ctx.cover_sheet_shard.contains(&ShardBy::Group) {
+        1
+    } else {
+        0
+    };
+
     if ctx.cover_sheets && adv_result.blank_count > 0 {
-        plan.items.push(ScorecardItem {
-            scorecard_number: 0,
-            station_number: None,
-            competition_name: comp_name,
-            event_id: &ctx.event.id,
-            event_name: ctx.event_name,
-            round_number: ctx.target.round_number,
-            group_number: 1,
-            stage_name: round_stage,
-            competitor_name: "",
-            registrant_id: None,
-            wca_id: None,
-            attempt_count: ctx.attempt_count,
-            time_limit_info: None,
-            is_blank: false,
-            is_cover_sheet: true,
-            total_group_cards: adv_result.blank_count,
-        });
+        plan.items.push(ScorecardItem::cover_sheet(
+            comp_name,
+            &ctx.event.id,
+            ctx.event_name,
+            ctx.target.round_number,
+            bundle_group,
+            bundle_stage,
+            ctx.attempt_count,
+            adv_result.blank_count,
+        ));
     }
 
     for _ in 0..adv_result.blank_count {
-        plan.items.push(ScorecardItem {
-            scorecard_number: 0,
-            station_number: None,
-            competition_name: comp_name,
-            event_id: &ctx.event.id,
-            event_name: ctx.event_name,
-            round_number: ctx.target.round_number,
-            group_number: 1,
-            stage_name: round_stage,
-            competitor_name: "",
-            registrant_id: None,
-            wca_id: None,
-            attempt_count: ctx.attempt_count,
+        plan.items.push(ScorecardItem::blank(
+            comp_name,
+            &ctx.event.id,
+            ctx.event_name,
+            ctx.target.round_number,
+            1,
+            round_stage,
+            ctx.attempt_count,
             time_limit_info,
-            is_blank: true,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        });
+        ));
     }
 
     plan.summaries.push(PlannedRoundSummary::SubsequentRound {
@@ -292,13 +311,21 @@ impl ScorecardPlanner {
         comp: &'a Competition,
         requested_events: &[String],
         cover_sheets: bool,
+        cover_sheet_shard: &[ShardBy],
     ) -> Result<ScorecardPlan<'a>, Box<dyn Error>> {
         let (targets, notes) = Self::resolve_targets(comp, requested_events);
         let activity_map = comp.build_activity_schedule_map();
         let mut plan = ScorecardPlan::new(notes);
 
         for target in &targets {
-            Self::plan_target_round(comp, target, &activity_map, cover_sheets, &mut plan)?;
+            Self::plan_target_round(
+                comp,
+                target,
+                &activity_map,
+                cover_sheets,
+                cover_sheet_shard,
+                &mut plan,
+            )?;
         }
 
         plan.assign_scorecard_numbers();
@@ -310,6 +337,7 @@ impl ScorecardPlanner {
         target: &GenerationTarget,
         activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
         cover_sheets: bool,
+        cover_sheet_shard: &[ShardBy],
         plan: &mut ScorecardPlan<'a>,
     ) -> Result<(), Box<dyn Error>> {
         let (event, round) = find_event_and_round(comp, target)?;
@@ -326,6 +354,7 @@ impl ScorecardPlanner {
             attempt_count,
             activity_map,
             cover_sheets,
+            cover_sheet_shard,
         };
 
         if target.is_open_round {

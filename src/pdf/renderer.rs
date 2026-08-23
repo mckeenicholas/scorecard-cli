@@ -261,7 +261,7 @@ impl<'a> CardPainter<'a> {
         );
     }
 
-    /// Draws the competitor ID and name grid table.
+    /// Draws the competitor ID, name, and WCA ID grid table.
     pub fn draw_competitor_info_table(&mut self, card: &ScorecardItem<'_>) {
         self.advance_y(5.0);
         let mut id_buf = itoa::Buffer::new();
@@ -270,15 +270,17 @@ impl<'a> CardPainter<'a> {
             .map(|id| id_buf.format(id))
             .unwrap_or("-");
         let name_val = card.display_competitor_name();
+        let wca_id_val = card.display_wca_id();
 
         self.draw_grid_table(
             12.0,
             14.0,
             &[
-                ("ID", 0.20, TextAlign::Center),
-                ("Competitor Name", 0.80, TextAlign::Left),
+                ("ID", 0.16, TextAlign::Center),
+                ("Competitor Name", 0.54, TextAlign::Left),
+                ("WCA ID", 0.30, TextAlign::Center),
             ],
-            &[&[id_val, &name_val]],
+            &[&[id_val, name_val, wca_id_val]],
         );
     }
 
@@ -520,11 +522,24 @@ impl<'a> CardPainter<'a> {
         }
     }
 
+    /// Draws a complete competitor scorecard.
+    pub fn draw_competitor_card(&mut self, card: &ScorecardItem<'_>) {
+        self.draw_outer_border();
+        self.draw_top_header(card.scorecard_number, &card.truncated_competition_name(30));
+        self.draw_event_info_table(card);
+        self.draw_competitor_info_table(card);
+        self.draw_attempt_table(card.attempt_count, card.time_limit_info);
+    }
+
     /// Draws a complete cover sheet for a group with competition info, checkboxes, and signature fields.
     pub fn draw_cover_sheet(&mut self, card: &ScorecardItem<'_>) {
         self.draw_outer_border();
+        self.draw_cover_sheet_header(card);
+        self.draw_delegate_section(card.total_group_cards);
+        self.draw_data_entry_section();
+    }
 
-        // Top Header: Competition Name
+    fn draw_cover_sheet_header(&mut self, card: &ScorecardItem<'_>) {
         self.advance_y(6.0);
         TextDrawer::draw(
             self.ops,
@@ -539,7 +554,6 @@ impl<'a> CardPainter<'a> {
             },
         );
 
-        // Top Header: Event & Round
         self.advance_y(14.0);
         let event_round_str = format!("{} Round {}", card.event_name, card.round_number);
         TextDrawer::draw(
@@ -555,32 +569,36 @@ impl<'a> CardPainter<'a> {
             },
         );
 
-        // Top Header: Group & Stage
-        self.advance_y(13.0);
-        let group_stage_str = if let Some(stage) = card.stage_name {
-            format!("Group {} ({})", card.group_number, stage)
-        } else {
-            format!("Group {}", card.group_number)
+        let group_stage_str = match (card.group_number, card.stage_name) {
+            (g, Some(stage)) if g > 0 => format!("Group {} ({})", g, stage),
+            (g, None) if g > 0 => format!("Group {}", g),
+            (0, Some(stage)) => format!("Stage: {}", stage),
+            (0, None) => String::new(),
+            _ => String::new(),
         };
-        TextDrawer::draw(
-            self.ops,
-            TextSpec {
-                text: &group_stage_str,
-                cell_x: self.inner_x,
-                baseline_y: self.cur_y,
-                cell_w: self.inner_w,
-                font_size: 9.5,
-                bold: true,
-                align: TextAlign::Center,
-            },
-        );
+        if !group_stage_str.is_empty() {
+            self.advance_y(13.0);
+            TextDrawer::draw(
+                self.ops,
+                TextSpec {
+                    text: &group_stage_str,
+                    cell_x: self.inner_x,
+                    baseline_y: self.cur_y,
+                    cell_w: self.inner_w,
+                    font_size: 9.5,
+                    bold: true,
+                    align: TextAlign::Center,
+                },
+            );
+        }
+    }
 
-        // --- FOR DELEGATE ---
+    fn draw_delegate_section(&mut self, total_cards: usize) {
         self.advance_y(14.0);
         self.draw_section_banner("FOR DELEGATE");
 
         self.advance_y(14.0);
-        let bundle_str = format!("1. Bundled all {} scorecards", card.total_group_cards);
+        let bundle_str = format!("1. Bundled all {} scorecards", total_cards);
         self.draw_checkbox_item(&bundle_str);
 
         self.advance_y(13.0);
@@ -591,50 +609,33 @@ impl<'a> CardPainter<'a> {
 
         self.advance_y(13.0);
         self.draw_field_with_line("Delegate initials:", 6.0);
+    }
 
-        // --- FOR DATA ENTRY ---
+    fn draw_data_entry_section(&mut self) {
         self.advance_y(16.0);
         self.draw_section_banner("FOR DATA ENTRY");
 
         self.advance_y(14.0);
-        TextDrawer::draw(
-            self.ops,
-            TextSpec {
-                text: "4. Results entered by Scoretaker",
-                cell_x: self.inner_x + 6.0,
-                baseline_y: self.cur_y,
-                cell_w: self.inner_w - 12.0,
-                font_size: 8.5,
-                bold: false,
-                align: TextAlign::Left,
-            },
-        );
-
+        self.draw_step_header("4. Results entered by Scoretaker");
         self.advance_y(12.0);
         self.draw_field_with_line("Scoretaker initials:", 18.0);
 
         self.advance_y(14.0);
-        TextDrawer::draw(
-            self.ops,
-            TextSpec {
-                text: "5. Incidents logged by Delegate",
-                cell_x: self.inner_x + 6.0,
-                baseline_y: self.cur_y,
-                cell_w: self.inner_w - 12.0,
-                font_size: 8.5,
-                bold: false,
-                align: TextAlign::Left,
-            },
-        );
-
+        self.draw_step_header("5. Incidents logged by Delegate");
         self.advance_y(12.0);
         self.draw_field_with_line("Delegate initials:", 18.0);
 
         self.advance_y(14.0);
+        self.draw_step_header("6. Results checked by Delegate");
+        self.advance_y(12.0);
+        self.draw_field_with_line("Delegate initials:", 18.0);
+    }
+
+    fn draw_step_header(&mut self, text: &str) {
         TextDrawer::draw(
             self.ops,
             TextSpec {
-                text: "6. Results checked by Delegate",
+                text,
                 cell_x: self.inner_x + 6.0,
                 baseline_y: self.cur_y,
                 cell_w: self.inner_w - 12.0,
@@ -643,9 +644,6 @@ impl<'a> CardPainter<'a> {
                 align: TextAlign::Left,
             },
         );
-
-        self.advance_y(12.0);
-        self.draw_field_with_line("Delegate initials:", 18.0);
     }
 }
 
@@ -660,11 +658,7 @@ impl ScorecardRenderer {
         if card.is_cover_sheet {
             painter.draw_cover_sheet(card);
         } else {
-            painter.draw_outer_border();
-            painter.draw_top_header(card.scorecard_number, &card.truncated_competition_name(30));
-            painter.draw_event_info_table(card);
-            painter.draw_competitor_info_table(card);
-            painter.draw_attempt_table(card.attempt_count, card.time_limit_info);
+            painter.draw_competitor_card(card);
         }
     }
 }

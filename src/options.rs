@@ -97,6 +97,17 @@ pub struct Cli {
     )]
     pub cover_sheets: Option<bool>,
 
+    /// Set cover sheet bundling criteria (stage, event, group)
+    #[arg(
+        long = "cover-sheet-shard",
+        visible_alias = "cover-sheets-shard",
+        value_enum,
+        value_name = "SHARD",
+        value_delimiter = ',',
+        num_args = 1..
+    )]
+    pub cover_sheet_shard: Option<Vec<ShardBy>>,
+
     /// Display local names first
     #[arg(
         short = 'l',
@@ -165,6 +176,7 @@ pub struct ResolvedOptions {
     pub format: PageFormat,
     pub ascii: bool,
     pub cover_sheets: bool,
+    pub cover_sheet_shard: Vec<ShardBy>,
     pub shard: Vec<ShardBy>,
     pub local_names_first: bool,             // TODO: wire to renderer
     pub print_one_name: bool,                // TODO: wire to renderer
@@ -181,6 +193,7 @@ impl Default for ResolvedOptions {
             format: PageFormat::Group,
             ascii: false,
             cover_sheets: false,
+            cover_sheet_shard: Vec::new(),
             shard: Vec::new(),
             local_names_first: false,
             print_one_name: false,
@@ -240,12 +253,20 @@ impl ResolvedOptions {
         self.ascii = cli.ascii;
         Self::apply_optional(&mut self.cover_sheets, cli.cover_sheets);
 
+        if self.cover_sheets {
+            if let Some(ref css) = cli.cover_sheet_shard {
+                self.cover_sheet_shard = css.clone();
+                Self::normalize_shard_list(&mut self.cover_sheet_shard);
+            } else if self.cover_sheet_shard.is_empty() {
+                self.cover_sheet_shard = vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group];
+            }
+        } else {
+            self.cover_sheet_shard.clear();
+        }
+
         if let Some(ref s) = cli.shard {
             self.shard = s.clone();
-            self.normalize_shards();
-        } else if self.cover_sheets && self.shard.is_empty() {
-            // When cover sheets are enabled without explicit sharding, default to sharding by stage, event, and group.
-            self.shard = vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group];
+            Self::normalize_shard_list(&mut self.shard);
         }
 
         Self::apply_optional(&mut self.local_names_first, cli.local_names_first);
@@ -262,9 +283,36 @@ impl ResolvedOptions {
         Self::apply_optional(&mut self.scramble_checker_blank, cli.scramble_checker_blank);
     }
 
-    fn normalize_shards(&mut self) {
-        self.shard.sort_by_key(|s| *s as u8);
-        self.shard.dedup();
+    fn normalize_shard_list(list: &mut Vec<ShardBy>) {
+        list.sort_by_key(|s| *s as u8);
+        list.dedup();
+    }
+
+    /// Validates that PDF file sharding is not more specific than cover sheet sharding.
+    pub fn validate_compatibility(&self) -> Result<(), String> {
+        if !self.cover_sheets || self.shard.is_empty() {
+            return Ok(());
+        }
+
+        for file_dim in &self.shard {
+            if !self.cover_sheet_shard.contains(file_dim) {
+                let cs_str = if self.cover_sheet_shard.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    self.cover_sheet_shard
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                return Err(format!(
+                    "Incompatible sharding: PDF file sharding by '{}' is more specific than cover sheet sharding (sharded by: {}). A set covered by one cover sheet cannot be split across multiple PDF files.",
+                    file_dim, cs_str
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     fn apply_optional<T: Clone>(target: &mut T, src: Option<T>) {
@@ -280,16 +328,29 @@ impl ResolvedOptions {
         out.push_str(&format!("Paper Size:                  {}\n", self.paper));
         out.push_str(&format!("Format:                      {}\n", self.format));
         out.push_str(&format!("ASCII Only:                  {}\n", self.ascii));
-        out.push_str(&format!(
-            "Cover Sheets:                {}\n",
-            self.cover_sheets
-        ));
+        if self.cover_sheets {
+            let cs_strs: Vec<String> = self
+                .cover_sheet_shard
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            out.push_str(&format!(
+                "Cover Sheets:                true (bundled by: {})\n",
+                if cs_strs.is_empty() {
+                    "(all)".to_string()
+                } else {
+                    cs_strs.join(", ")
+                }
+            ));
+        } else {
+            out.push_str("Cover Sheets:                false\n");
+        }
         if self.shard.is_empty() {
-            out.push_str("Shard By:                    (None - Single PDF)\n");
+            out.push_str("PDF Shard By:                (None - Single PDF)\n");
         } else {
             let shard_strs: Vec<String> = self.shard.iter().map(|s| s.to_string()).collect();
             out.push_str(&format!(
-                "Shard By:                    {}\n",
+                "PDF Shard By:                {}\n",
                 shard_strs.join(", ")
             ));
         }
@@ -415,34 +476,57 @@ mod tests {
 
     #[test]
     fn test_cover_sheets_sharding_behavior() {
-        // When cover sheets are enabled without explicit sharding, default to Stage, Event, Group
+        // When cover sheets are enabled without explicit sharding, shard remains empty (single PDF)
+        // and cover_sheet_shard defaults to Stage, Event, Group
         let cli_cover = Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c"]).unwrap();
         let resolved = ResolvedOptions::resolve(&cli_cover, None);
         assert!(resolved.cover_sheets);
+        assert!(resolved.shard.is_empty());
         assert_eq!(
-            resolved.shard,
+            resolved.cover_sheet_shard,
             vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group]
         );
+        assert!(resolved.validate_compatibility().is_ok());
 
-        // When cover sheets are enabled with explicit sharding, honor the user's explicit sharding
+        // When cover sheets are enabled with explicit file sharding (e.g. stage), it's compatible
         let cli_override =
-            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "-s", "event"]).unwrap();
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "-s", "stage"]).unwrap();
         let resolved_override = ResolvedOptions::resolve(&cli_override, None);
         assert!(resolved_override.cover_sheets);
-        assert_eq!(resolved_override.shard, vec![ShardBy::Event]);
-
-        // When groupifier enables cover sheets and no CLI shard is passed, default to Stage, Event, Group
-        let cli_empty = Cli::try_parse_from(vec!["scorecard-gen", "Comp2026"]).unwrap();
-        let groupifier = GroupifierCompetitionConfig {
-            print_scorecards_cover_sheets: Some(true),
-            ..Default::default()
-        };
-        let resolved_grp = ResolvedOptions::resolve(&cli_empty, Some(&groupifier));
-        assert!(resolved_grp.cover_sheets);
+        assert_eq!(resolved_override.shard, vec![ShardBy::Stage]);
         assert_eq!(
-            resolved_grp.shard,
+            resolved_override.cover_sheet_shard,
             vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group]
         );
+        assert!(resolved_override.validate_compatibility().is_ok());
+
+        // When custom cover_sheet_shard is given (e.g. event only) and file shard is stage: incompatible!
+        let cli_incompatible = Cli::try_parse_from(vec![
+            "scorecard-gen",
+            "Comp2026",
+            "-c",
+            "--cover-sheet-shard",
+            "event",
+            "-s",
+            "stage",
+        ])
+        .unwrap();
+        let resolved_incompatible = ResolvedOptions::resolve(&cli_incompatible, None);
+        assert!(resolved_incompatible.validate_compatibility().is_err());
+
+        // When custom cover_sheet_shard is given (e.g. stage,event) and file shard is stage: compatible!
+        let cli_custom_ok = Cli::try_parse_from(vec![
+            "scorecard-gen",
+            "Comp2026",
+            "-c",
+            "--cover-sheet-shard",
+            "stage,event",
+            "-s",
+            "stage",
+        ])
+        .unwrap();
+        let resolved_custom_ok = ResolvedOptions::resolve(&cli_custom_ok, None);
+        assert!(resolved_custom_ok.validate_compatibility().is_ok());
     }
 
     #[test]

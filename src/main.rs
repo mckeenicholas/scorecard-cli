@@ -153,37 +153,43 @@ fn resolve_options(cli: &Cli, comp: &wcif::Competition) -> ResolvedOptions {
     active_opts
 }
 
+type BundlePartitionKey<'a> = (Option<&'a str>, Option<&'a str>, usize, usize);
+
 fn validate_sharding_compatibility(
     partitions: &[(String, Vec<ScorecardItem<'_>>)],
-    cover_sheets: bool,
+    options: &ResolvedOptions,
 ) -> Result<(), Box<dyn Error>> {
-    if !cover_sheets {
+    options.validate_compatibility()?;
+
+    if !options.cover_sheets {
         return Ok(());
     }
 
-    // Verify that all cards belonging to the same group end up in the exact same partition file
-    let mut group_partition_map: std::collections::HashMap<
-        (String, usize, usize, Option<String>),
-        &str,
-    > = std::collections::HashMap::new();
+    // Verify that all cards belonging to the same cover sheet bundle end up in the exact same partition file
+    let has_stage = options.cover_sheet_shard.contains(&ShardBy::Stage);
+    let has_event = options.cover_sheet_shard.contains(&ShardBy::Event);
+    let has_group = options.cover_sheet_shard.contains(&ShardBy::Group);
+
+    let mut bundle_partition_map: std::collections::HashMap<BundlePartitionKey<'_>, &str> =
+        std::collections::HashMap::new();
 
     for (filename, partition_cards) in partitions {
         for card in partition_cards {
-            let group_key = (
-                card.event_id.to_string(),
-                card.round_number,
-                card.group_number,
-                card.stage_name.map(|s| s.to_string()),
+            let bundle_key = (
+                if has_stage { card.stage_name } else { None },
+                if has_event { Some(card.event_id) } else { None },
+                if has_event { card.round_number } else { 0 },
+                if has_group { card.group_number } else { 0 },
             );
-            if let Some(existing_file) = group_partition_map.get(&group_key) {
+            if let Some(existing_file) = bundle_partition_map.get(&bundle_key) {
                 if *existing_file != filename.as_str() {
                     return Err(format!(
-                        "Incompatible sharding: Group {} for event {} round {} is split across files '{}' and '{}'. Cover sheets require each group to remain intact in a single file.",
-                        card.group_number, card.event_id, card.round_number, existing_file, filename
+                        "Incompatible sharding: Scorecard set for event {} round {} group {} is split across files '{}' and '{}'. Cover sheets require each bundle to remain intact in a single file.",
+                        card.event_id, card.round_number, card.group_number, existing_file, filename
                     ).into());
                 }
             } else {
-                group_partition_map.insert(group_key, filename.as_str());
+                bundle_partition_map.insert(bundle_key, filename.as_str());
             }
         }
     }
@@ -199,7 +205,7 @@ fn generate_partitioned_pdfs(
     let layout = PageLayout::new(options.paper);
     let generator = PdfGenerator::with_format(layout, options.format);
     let partitions = partition_scorecards(&comp.id, cards, &options.shard);
-    validate_sharding_compatibility(&partitions, options.cover_sheets)?;
+    validate_sharding_compatibility(&partitions, options)?;
     let is_multi = partitions.len() > 1;
 
     if is_multi {
@@ -233,7 +239,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let comp = load_competition(&cli.comp_source)?;
     let active_opts = resolve_options(&cli, &comp);
-    let plan = ScorecardPlanner::plan(&comp, &cli.events, active_opts.cover_sheets)?;
+    let plan = ScorecardPlanner::plan(
+        &comp,
+        &cli.events,
+        active_opts.cover_sheets,
+        &active_opts.cover_sheet_shard,
+    )?;
 
     if plan.is_empty() {
         println!("No scorecards to generate.");
@@ -437,16 +448,35 @@ mod tests {
             total_group_cards: 0,
         };
 
-        let partitions_ok = vec![("file1.pdf".to_string(), vec![card1])];
-        assert!(validate_sharding_compatibility(&partitions_ok, true).is_ok());
-        assert!(validate_sharding_compatibility(&partitions_ok, false).is_ok());
+        let opts_cover_on = ResolvedOptions {
+            cover_sheets: true,
+            cover_sheet_shard: vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group],
+            ..Default::default()
+        };
+        let opts_cover_off = ResolvedOptions {
+            cover_sheets: false,
+            ..Default::default()
+        };
 
-        // Split same group across two files
+        let partitions_ok = vec![("file1.pdf".to_string(), vec![card1])];
+        assert!(validate_sharding_compatibility(&partitions_ok, &opts_cover_on).is_ok());
+        assert!(validate_sharding_compatibility(&partitions_ok, &opts_cover_off).is_ok());
+
+        // Split same bundle across two files
         let partitions_split = vec![
             ("file1.pdf".to_string(), vec![card1]),
             ("file2.pdf".to_string(), vec![card1]),
         ];
-        assert!(validate_sharding_compatibility(&partitions_split, true).is_err());
-        assert!(validate_sharding_compatibility(&partitions_split, false).is_ok());
+        assert!(validate_sharding_compatibility(&partitions_split, &opts_cover_on).is_err());
+        assert!(validate_sharding_compatibility(&partitions_split, &opts_cover_off).is_ok());
+
+        // Config compatibility: file shard more specific than cover sheet shard
+        let opts_incompatible = ResolvedOptions {
+            cover_sheets: true,
+            cover_sheet_shard: vec![ShardBy::Event],
+            shard: vec![ShardBy::Stage],
+            ..Default::default()
+        };
+        assert!(validate_sharding_compatibility(&partitions_ok, &opts_incompatible).is_err());
     }
 }
