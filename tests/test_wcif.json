@@ -1,0 +1,144 @@
+{
+  "formatVersion": "1.0",
+  "id": "FastCubingSpring2026",
+  "name": "Fast Cubing Spring 2026",
+  "shortName": "Fast Spring 2026",
+  "persons": [
+    {
+      "name": "Alice Smith",
+      "wcaUserId": 1001,
+      "wcaId": "2022SMIT01",
+      "registrantId": 1,
+      "countryIso2": "US",
+      "gender": "f",
+      "registration": {
+        "wcaRegistrationId": 1,
+        "eventIds": ["333", "222"],
+        "status": "accepted",
+        "isCompeting": true
+      },
+      "assignments": [
+        {
+          "activityId": 101,
+          "stationNumber": 3,
+          "assignmentCode": "competitor"
+        }
+      ]
+    },
+    {
+      "name": "Bob Jones",
+      "wcaUserId": 1002,
+      "wcaId": "",
+      "registrantId": 2,
+      "countryIso2": "CA",
+      "gender": "m",
+      "registration": {
+        "wcaRegistrationId": 2,
+        "eventIds": ["333"],
+        "status": "accepted",
+        "isCompeting": true
+      },
+      "assignments": [
+        {
+          "activityId": 102,
+          "stationNumber": 5,
+          "assignmentCode": "competitor"
+        }
+      ]
+    },
+    {
+      "name": "Charlie Brown",
+      "wcaUserId": 1003,
+      "wcaId": "2019BROW02",
+      "registrantId": 3,
+      "countryIso2": "US",
+      "gender": "m",
+      "registration": {
+        "wcaRegistrationId": 3,
+        "eventIds": ["333", "222"],
+        "status": "accepted",
+        "isCompeting": true
+      },
+      "assignments": []
+    }
+  ],
+  "events": [
+    {
+      "id": "333",
+      "rounds": [
+        {
+          "id": "333-r1",
+          "format": "a",
+          "scrambleSetCount": 2,
+          "advancementCondition": {
+            "type": "ranking",
+            "value": 2
+          }
+        },
+        {
+          "id": "333-r2",
+          "format": "a",
+          "scrambleSetCount": 1
+        }
+      ]
+    },
+    {
+      "id": "222",
+      "rounds": [
+        {
+          "id": "222-r1",
+          "format": "a",
+          "scrambleSetCount": 1
+        }
+      ]
+    }
+  ],
+  "schedule": {
+    "venues": [
+      {
+        "rooms": [
+          {
+            "activities": [
+              {
+                "id": 100,
+                "name": "3x3x3 Round 1",
+                "activityCode": "333-r1",
+                "childActivities": [
+                  {
+                    "id": 101,
+                    "name": "3x3x3 Round 1 Group 1",
+                    "activityCode": "333-r1-g1",
+                    "childActivities": []
+                  },
+                  {
+                    "id": 102,
+                    "name": "3x3x3 Round 1 Group 2",
+                    "activityCode": "333-r1-g2",
+                    "childActivities": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "extensions": [
+    {
+      "id": "groupifier.CompetitionConfig",
+      "specUrl": "https://groupifier.jonatanklosko.com",
+      "data": {
+        "scorecardPaperSize": "a4",
+        "scorecardOrder": "natural",
+        "printScorecardsCoverSheets": true,
+        "localNamesFirst": false,
+        "printOneName": false,
+        "printStations": true,
+        "printScrambleCheckerForTopRankedCompetitors": false,
+        "printScrambleCheckerForFinalRounds": false,
+        "printScrambleCheckerForBlankScorecards": false
+      }
+    }
+  ]
+}
