@@ -85,14 +85,11 @@ impl PdfGenerator {
         cards
             .par_chunks(layout.cards_per_page)
             .map(|chunk| {
-                let mut ops =
-                    Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });
+                let mut ops = Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });
 
                 for (idx, card) in chunk.iter().enumerate() {
                     let rect = layout.card_rect(idx);
-                    ScorecardRenderer::draw_card(
-                        &mut ops, card, rect.x, rect.y, rect.w, rect.h,
-                    );
+                    ScorecardRenderer::draw_card(&mut ops, card, rect.x, rect.y, rect.w, rect.h);
                 }
 
                 PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)

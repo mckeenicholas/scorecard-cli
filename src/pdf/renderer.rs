@@ -1,4 +1,4 @@
-use crate::scorecard::ScorecardItem;
+use crate::scorecard::{ScorecardItem, TimeLimitInfo};
 use printpdf::color::{Color, Greyscale};
 use printpdf::font::BuiltinFont;
 use printpdf::graphics::{Line, LinePoint, PaintMode, Point, Rect};
@@ -283,7 +283,11 @@ impl<'a> CardPainter<'a> {
     }
 
     /// Draws the attempt table dynamically sized to fill the remaining scorecard height, plus bottom cutoff/time limit footer.
-    pub fn draw_attempt_table(&mut self, attempt_count: usize, time_limit_info: Option<&str>) {
+    pub fn draw_attempt_table(
+        &mut self,
+        attempt_count: usize,
+        time_limit_info: Option<TimeLimitInfo>,
+    ) {
         self.advance_y(5.0);
         let header_h = 12.0;
 
@@ -311,7 +315,7 @@ impl<'a> CardPainter<'a> {
         &mut self,
         rows: &[&[&str]],
         header_h: f32,
-        time_limit_info: Option<&str>,
+        time_limit_info: Option<TimeLimitInfo>,
     ) {
         let footer_reserve = if time_limit_info.is_some() { 10.0 } else { 0.0 };
         let available_h = self.cur_y - self.min_y - footer_reserve;
@@ -320,7 +324,8 @@ impl<'a> CardPainter<'a> {
         self.draw_grid_table(header_h, row_h, &ATTEMPT_COLUMNS, rows);
 
         if let Some(info) = time_limit_info {
-            self.draw_attempt_footer(info);
+            let formatted = info.format_display();
+            self.draw_attempt_footer(&formatted);
         }
     }
 
@@ -339,21 +344,328 @@ impl<'a> CardPainter<'a> {
             },
         );
     }
+
+    /// Draws a styled horizontal section banner for cover sheets.
+    pub fn draw_section_banner(&mut self, title: &str) {
+        let banner_h = 13.0;
+        let y_bot = self.cur_y - banner_h;
+
+        // Background fill
+        self.ops.push(Op::SetFillColor {
+            col: Color::Greyscale(Greyscale::new(self.theme.header_bg_grey, None)),
+        });
+        self.ops.push(Op::DrawRectangle {
+            rectangle: Rect {
+                x: Pt(self.inner_x),
+                y: Pt(y_bot),
+                width: Pt(self.inner_w),
+                height: Pt(banner_h),
+                mode: Some(PaintMode::Fill),
+                winding_order: None,
+            },
+        });
+
+        // Top and bottom border lines
+        self.ops.push(Op::SetOutlineColor {
+            col: Color::Greyscale(Greyscale::new(self.theme.grid_line_grey, None)),
+        });
+        self.ops.push(Op::SetOutlineThickness {
+            pt: Pt(self.theme.border_thickness),
+        });
+
+        // Top line
+        self.ops.push(Op::DrawLine {
+            line: Line {
+                points: vec![
+                    LinePoint {
+                        p: Point {
+                            x: Pt(self.inner_x),
+                            y: Pt(self.cur_y),
+                        },
+                        bezier: false,
+                    },
+                    LinePoint {
+                        p: Point {
+                            x: Pt(self.inner_x + self.inner_w),
+                            y: Pt(self.cur_y),
+                        },
+                        bezier: false,
+                    },
+                ],
+                is_closed: false,
+            },
+        });
+
+        // Bottom line
+        self.ops.push(Op::DrawLine {
+            line: Line {
+                points: vec![
+                    LinePoint {
+                        p: Point {
+                            x: Pt(self.inner_x),
+                            y: Pt(y_bot),
+                        },
+                        bezier: false,
+                    },
+                    LinePoint {
+                        p: Point {
+                            x: Pt(self.inner_x + self.inner_w),
+                            y: Pt(y_bot),
+                        },
+                        bezier: false,
+                    },
+                ],
+                is_closed: false,
+            },
+        });
+
+        // Banner text
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: title,
+                cell_x: self.inner_x,
+                baseline_y: y_bot + 3.5,
+                cell_w: self.inner_w,
+                font_size: 8.5,
+                bold: true,
+                align: TextAlign::Center,
+            },
+        );
+
+        self.cur_y = y_bot;
+    }
+
+    /// Draws a square checkbox followed by a label on cover sheets.
+    pub fn draw_checkbox_item(&mut self, text: &str) {
+        let box_size = 8.0;
+        let box_x = self.inner_x + 6.0;
+        let box_y = self.cur_y - 1.0;
+
+        self.ops.push(Op::SetOutlineColor {
+            col: Color::Greyscale(Greyscale::new(0.2, None)),
+        });
+        self.ops.push(Op::SetOutlineThickness { pt: Pt(0.75) });
+        self.ops.push(Op::DrawRectangle {
+            rectangle: Rect {
+                x: Pt(box_x),
+                y: Pt(box_y),
+                width: Pt(box_size),
+                height: Pt(box_size),
+                mode: Some(PaintMode::Stroke),
+                winding_order: None,
+            },
+        });
+
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text,
+                cell_x: self.inner_x + 20.0,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w - 24.0,
+                font_size: 8.5,
+                bold: false,
+                align: TextAlign::Left,
+            },
+        );
+    }
+
+    /// Draws a text label followed by a horizontal fill-in underline for signatures/initials.
+    pub fn draw_field_with_line(&mut self, label: &str, indent: f32) {
+        let text_x = self.inner_x + indent;
+        let estimated_w = TextDrawer::estimate_width(label, 8.5);
+        let line_start_x = text_x + estimated_w + 4.0;
+        let line_end_x = self.inner_x + self.inner_w - 6.0;
+
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: label,
+                cell_x: text_x,
+                baseline_y: self.cur_y,
+                cell_w: estimated_w + 4.0,
+                font_size: 8.5,
+                bold: false,
+                align: TextAlign::Left,
+            },
+        );
+
+        if line_end_x > line_start_x {
+            self.ops.push(Op::SetOutlineColor {
+                col: Color::Greyscale(Greyscale::new(0.4, None)),
+            });
+            self.ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
+            self.ops.push(Op::DrawLine {
+                line: Line {
+                    points: vec![
+                        LinePoint {
+                            p: Point {
+                                x: Pt(line_start_x),
+                                y: Pt(self.cur_y - 1.0),
+                            },
+                            bezier: false,
+                        },
+                        LinePoint {
+                            p: Point {
+                                x: Pt(line_end_x),
+                                y: Pt(self.cur_y - 1.0),
+                            },
+                            bezier: false,
+                        },
+                    ],
+                    is_closed: false,
+                },
+            });
+        }
+    }
+
+    /// Draws a complete cover sheet for a group with competition info, checkboxes, and signature fields.
+    pub fn draw_cover_sheet(&mut self, card: &ScorecardItem<'_>) {
+        self.draw_outer_border();
+
+        // Top Header: Competition Name
+        self.advance_y(6.0);
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: card.competition_name,
+                cell_x: self.inner_x,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w,
+                font_size: 11.5,
+                bold: true,
+                align: TextAlign::Center,
+            },
+        );
+
+        // Top Header: Event & Round
+        self.advance_y(14.0);
+        let event_round_str = format!("{} Round {}", card.event_name, card.round_number);
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: &event_round_str,
+                cell_x: self.inner_x,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w,
+                font_size: 10.0,
+                bold: true,
+                align: TextAlign::Center,
+            },
+        );
+
+        // Top Header: Group & Stage
+        self.advance_y(13.0);
+        let group_stage_str = if let Some(stage) = card.stage_name {
+            format!("Group {} ({})", card.group_number, stage)
+        } else {
+            format!("Group {}", card.group_number)
+        };
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: &group_stage_str,
+                cell_x: self.inner_x,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w,
+                font_size: 9.5,
+                bold: true,
+                align: TextAlign::Center,
+            },
+        );
+
+        // --- FOR DELEGATE ---
+        self.advance_y(14.0);
+        self.draw_section_banner("FOR DELEGATE");
+
+        self.advance_y(14.0);
+        let bundle_str = format!("1. Bundled all {} scorecards", card.total_group_cards);
+        self.draw_checkbox_item(&bundle_str);
+
+        self.advance_y(13.0);
+        self.draw_checkbox_item("2. Checked for missing signatures");
+
+        self.advance_y(14.0);
+        self.draw_field_with_line("3. Number of scorecards with incidents:", 6.0);
+
+        self.advance_y(13.0);
+        self.draw_field_with_line("Delegate initials:", 6.0);
+
+        // --- FOR DATA ENTRY ---
+        self.advance_y(16.0);
+        self.draw_section_banner("FOR DATA ENTRY");
+
+        self.advance_y(14.0);
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: "4. Results entered by Scoretaker",
+                cell_x: self.inner_x + 6.0,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w - 12.0,
+                font_size: 8.5,
+                bold: false,
+                align: TextAlign::Left,
+            },
+        );
+
+        self.advance_y(12.0);
+        self.draw_field_with_line("Scoretaker initials:", 18.0);
+
+        self.advance_y(14.0);
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: "5. Incidents logged by Delegate",
+                cell_x: self.inner_x + 6.0,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w - 12.0,
+                font_size: 8.5,
+                bold: false,
+                align: TextAlign::Left,
+            },
+        );
+
+        self.advance_y(12.0);
+        self.draw_field_with_line("Delegate initials:", 18.0);
+
+        self.advance_y(14.0);
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: "6. Results checked by Delegate",
+                cell_x: self.inner_x + 6.0,
+                baseline_y: self.cur_y,
+                cell_w: self.inner_w - 12.0,
+                font_size: 8.5,
+                bold: false,
+                align: TextAlign::Left,
+            },
+        );
+
+        self.advance_y(12.0);
+        self.draw_field_with_line("Delegate initials:", 18.0);
+    }
 }
 
 /// Renderer for drawing scorecard elements and vector primitives to a PDF page instruction stream.
 pub struct ScorecardRenderer;
 
 impl ScorecardRenderer {
-    /// Draws a complete scorecard within the given bounding rectangle (x, y, w, h).
+    /// Draws a complete scorecard or cover sheet within the given bounding rectangle (x, y, w, h).
     pub fn draw_card(ops: &mut Vec<Op>, card: &ScorecardItem<'_>, x: f32, y: f32, w: f32, h: f32) {
         let mut painter = CardPainter::new(ops, x, y, w, h, &DEFAULT_THEME);
 
-        painter.draw_outer_border();
-        painter.draw_top_header(card.scorecard_number, &card.truncated_competition_name(30));
-        painter.draw_event_info_table(card);
-        painter.draw_competitor_info_table(card);
-        painter.draw_attempt_table(card.attempt_count, card.time_limit_info.as_deref());
+        if card.is_cover_sheet {
+            painter.draw_cover_sheet(card);
+        } else {
+            painter.draw_outer_border();
+            painter.draw_top_header(card.scorecard_number, &card.truncated_competition_name(30));
+            painter.draw_event_info_table(card);
+            painter.draw_competitor_info_table(card);
+            painter.draw_attempt_table(card.attempt_count, card.time_limit_info);
+        }
     }
 }
 
@@ -423,12 +735,7 @@ impl TableDrawer {
         }
     }
 
-    fn draw_row_cells(
-        ops: &mut Vec<Op>,
-        spec: &TableSpec<'_>,
-        top_y: f32,
-        theme: &ScorecardTheme,
-    ) {
+    fn draw_row_cells(ops: &mut Vec<Op>, spec: &TableSpec<'_>, top_y: f32, theme: &ScorecardTheme) {
         let mut row_top = top_y - spec.header_h;
         for &row in spec.rows {
             let mut cell_x = spec.tbl_x;
@@ -513,12 +820,7 @@ impl TableDrawer {
         }
     }
 
-    fn draw_vertical_dividers(
-        ops: &mut Vec<Op>,
-        spec: &TableSpec<'_>,
-        top_y: f32,
-        bottom_y: f32,
-    ) {
+    fn draw_vertical_dividers(ops: &mut Vec<Op>, spec: &TableSpec<'_>, top_y: f32, bottom_y: f32) {
         let mut sep_x = spec.tbl_x;
         for &w in &spec.col_widths[..spec.col_widths.len() - 1] {
             sep_x += w;
@@ -601,10 +903,7 @@ impl TextDrawer {
             size: Pt(font_size),
         });
         ops.push(Op::SetTextCursor {
-            pos: Point {
-                x: Pt(x),
-                y: Pt(y),
-            },
+            pos: Point { x: Pt(x), y: Pt(y) },
         });
         ops.push(Op::ShowText {
             items: vec![TextItem::Text(text.to_string())],
@@ -662,8 +961,15 @@ mod tests {
             registrant_id: Some(1),
             wca_id: Some("2022SMIT01"),
             attempt_count: 5,
-            time_limit_info: Some("Time limit: 10:00.00".to_string()),
+            time_limit_info: Some(TimeLimitInfo {
+                limit_centiseconds: Some(60000),
+                is_cumulative: false,
+                cutoff_centiseconds: None,
+                cutoff_attempts: 0,
+            }),
             is_blank: false,
+            is_cover_sheet: false,
+            total_group_cards: 0,
         };
 
         let mut ops = Vec::new();
@@ -675,6 +981,39 @@ mod tests {
         let has_text = ops.iter().any(|op| matches!(op, Op::ShowText { .. }));
         assert!(has_rectangles);
         assert!(has_text);
+    }
+
+    #[test]
+    fn test_draw_cover_sheet_operations() {
+        let cover_card = ScorecardItem {
+            scorecard_number: 0,
+            station_number: None,
+            competition_name: "Ocean State Cubikon 2025",
+            event_id: "333",
+            event_name: "3x3x3 Cube",
+            round_number: 1,
+            group_number: 1,
+            stage_name: Some("Main Hall"),
+            competitor_name: "",
+            registrant_id: None,
+            wca_id: None,
+            attempt_count: 5,
+            time_limit_info: None,
+            is_blank: false,
+            is_cover_sheet: true,
+            total_group_cards: 15,
+        };
+
+        let mut ops = Vec::new();
+        ScorecardRenderer::draw_card(&mut ops, &cover_card, 18.0, 18.0, 270.0, 380.0);
+
+        assert!(!ops.is_empty());
+        let has_rectangles = ops.iter().any(|op| matches!(op, Op::DrawRectangle { .. }));
+        let has_text = ops.iter().any(|op| matches!(op, Op::ShowText { .. }));
+        let has_lines = ops.iter().any(|op| matches!(op, Op::DrawLine { .. }));
+        assert!(has_rectangles);
+        assert!(has_text);
+        assert!(has_lines);
     }
 
     #[test]

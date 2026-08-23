@@ -107,7 +107,7 @@ fn partition_scorecards<'a>(
 
     for card in cards {
         let key = build_shard_key(card, has_stage, has_event, has_group);
-        map.entry(key).or_default().push(card.clone());
+        map.entry(key).or_default().push(*card);
     }
 
     map.into_iter()
@@ -153,6 +153,44 @@ fn resolve_options(cli: &Cli, comp: &wcif::Competition) -> ResolvedOptions {
     active_opts
 }
 
+fn validate_sharding_compatibility(
+    partitions: &[(String, Vec<ScorecardItem<'_>>)],
+    cover_sheets: bool,
+) -> Result<(), Box<dyn Error>> {
+    if !cover_sheets {
+        return Ok(());
+    }
+
+    // Verify that all cards belonging to the same group end up in the exact same partition file
+    let mut group_partition_map: std::collections::HashMap<
+        (String, usize, usize, Option<String>),
+        &str,
+    > = std::collections::HashMap::new();
+
+    for (filename, partition_cards) in partitions {
+        for card in partition_cards {
+            let group_key = (
+                card.event_id.to_string(),
+                card.round_number,
+                card.group_number,
+                card.stage_name.map(|s| s.to_string()),
+            );
+            if let Some(existing_file) = group_partition_map.get(&group_key) {
+                if *existing_file != filename.as_str() {
+                    return Err(format!(
+                        "Incompatible sharding: Group {} for event {} round {} is split across files '{}' and '{}'. Cover sheets require each group to remain intact in a single file.",
+                        card.group_number, card.event_id, card.round_number, existing_file, filename
+                    ).into());
+                }
+            } else {
+                group_partition_map.insert(group_key, filename.as_str());
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn generate_partitioned_pdfs(
     comp: &wcif::Competition,
     cards: &[ScorecardItem<'_>],
@@ -161,6 +199,7 @@ fn generate_partitioned_pdfs(
     let layout = PageLayout::new(options.paper);
     let generator = PdfGenerator::with_format(layout, options.format);
     let partitions = partition_scorecards(&comp.id, cards, &options.shard);
+    validate_sharding_compatibility(&partitions, options.cover_sheets)?;
     let is_multi = partitions.len() > 1;
 
     if is_multi {
@@ -194,7 +233,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let comp = load_competition(&cli.comp_source)?;
     let active_opts = resolve_options(&cli, &comp);
-    let plan = ScorecardPlanner::plan(&comp, &cli.events)?;
+    let plan = ScorecardPlanner::plan(&comp, &cli.events, active_opts.cover_sheets)?;
 
     if plan.is_empty() {
         println!("No scorecards to generate.");
@@ -244,6 +283,8 @@ mod tests {
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
+                is_cover_sheet: false,
+                total_group_cards: 0,
             },
             ScorecardItem {
                 scorecard_number: 2,
@@ -260,6 +301,8 @@ mod tests {
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
+                is_cover_sheet: false,
+                total_group_cards: 0,
             },
         ];
 
@@ -287,6 +330,8 @@ mod tests {
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
+                is_cover_sheet: false,
+                total_group_cards: 0,
             },
             ScorecardItem {
                 scorecard_number: 2,
@@ -303,6 +348,8 @@ mod tests {
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
+                is_cover_sheet: false,
+                total_group_cards: 0,
             },
         ];
 
@@ -330,6 +377,8 @@ mod tests {
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
+                is_cover_sheet: false,
+                total_group_cards: 0,
             },
             ScorecardItem {
                 scorecard_number: 2,
@@ -346,6 +395,8 @@ mod tests {
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
+                is_cover_sheet: false,
+                total_group_cards: 0,
             },
         ];
 
@@ -363,5 +414,39 @@ mod tests {
             partitions[1].0,
             "Comp2026-scorecards-red-stage-333-r1-group2.pdf"
         );
+    }
+
+    #[test]
+    fn test_validate_sharding_compatibility() {
+        let card1 = ScorecardItem {
+            scorecard_number: 1,
+            station_number: Some(1),
+            competition_name: "Comp",
+            event_id: "333",
+            event_name: "3x3x3 Cube",
+            round_number: 1,
+            group_number: 1,
+            stage_name: Some("Red Stage"),
+            competitor_name: "Alice",
+            registrant_id: Some(1),
+            wca_id: None,
+            attempt_count: 5,
+            time_limit_info: None,
+            is_blank: false,
+            is_cover_sheet: false,
+            total_group_cards: 0,
+        };
+
+        let partitions_ok = vec![("file1.pdf".to_string(), vec![card1])];
+        assert!(validate_sharding_compatibility(&partitions_ok, true).is_ok());
+        assert!(validate_sharding_compatibility(&partitions_ok, false).is_ok());
+
+        // Split same group across two files
+        let partitions_split = vec![
+            ("file1.pdf".to_string(), vec![card1]),
+            ("file2.pdf".to_string(), vec![card1]),
+        ];
+        assert!(validate_sharding_compatibility(&partitions_split, true).is_err());
+        assert!(validate_sharding_compatibility(&partitions_split, false).is_ok());
     }
 }

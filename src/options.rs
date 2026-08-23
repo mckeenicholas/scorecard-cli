@@ -180,7 +180,7 @@ impl Default for ResolvedOptions {
             paper: PaperSize::Letter,
             format: PageFormat::Group,
             ascii: false,
-            cover_sheets: true,
+            cover_sheets: false,
             shard: Vec::new(),
             local_names_first: false,
             print_one_name: false,
@@ -243,6 +243,9 @@ impl ResolvedOptions {
         if let Some(ref s) = cli.shard {
             self.shard = s.clone();
             self.normalize_shards();
+        } else if self.cover_sheets && self.shard.is_empty() {
+            // When cover sheets are enabled without explicit sharding, default to sharding by stage, event, and group.
+            self.shard = vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group];
         }
 
         Self::apply_optional(&mut self.local_names_first, cli.local_names_first);
@@ -277,16 +280,31 @@ impl ResolvedOptions {
         out.push_str(&format!("Paper Size:                  {}\n", self.paper));
         out.push_str(&format!("Format:                      {}\n", self.format));
         out.push_str(&format!("ASCII Only:                  {}\n", self.ascii));
-        out.push_str(&format!("Cover Sheets:                {}\n", self.cover_sheets));
+        out.push_str(&format!(
+            "Cover Sheets:                {}\n",
+            self.cover_sheets
+        ));
         if self.shard.is_empty() {
             out.push_str("Shard By:                    (None - Single PDF)\n");
         } else {
             let shard_strs: Vec<String> = self.shard.iter().map(|s| s.to_string()).collect();
-            out.push_str(&format!("Shard By:                    {}\n", shard_strs.join(", ")));
+            out.push_str(&format!(
+                "Shard By:                    {}\n",
+                shard_strs.join(", ")
+            ));
         }
-        out.push_str(&format!("Local Names First:           {}\n", self.local_names_first));
-        out.push_str(&format!("Print One Name:              {}\n", self.print_one_name));
-        out.push_str(&format!("Print Stations (Station #):  {}\n", self.print_stations));
+        out.push_str(&format!(
+            "Local Names First:           {}\n",
+            self.local_names_first
+        ));
+        out.push_str(&format!(
+            "Print One Name:              {}\n",
+            self.print_one_name
+        ));
+        out.push_str(&format!(
+            "Print Stations (Station #):  {}\n",
+            self.print_stations
+        ));
         out.push_str(&format!(
             "Scramble Chk Top Ranked:     {}\n",
             self.scramble_checker_top_ranked
@@ -391,8 +409,40 @@ mod tests {
         assert!(resolved.print_stations);
         // Groupifier stacked order applies
         assert_eq!(resolved.format, PageFormat::Stacked);
-        // Default cover_sheets remains true
+        // Default cover_sheets is false
+        assert!(!resolved.cover_sheets);
+    }
+
+    #[test]
+    fn test_cover_sheets_sharding_behavior() {
+        // When cover sheets are enabled without explicit sharding, default to Stage, Event, Group
+        let cli_cover = Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c"]).unwrap();
+        let resolved = ResolvedOptions::resolve(&cli_cover, None);
         assert!(resolved.cover_sheets);
+        assert_eq!(
+            resolved.shard,
+            vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group]
+        );
+
+        // When cover sheets are enabled with explicit sharding, honor the user's explicit sharding
+        let cli_override =
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "-s", "event"]).unwrap();
+        let resolved_override = ResolvedOptions::resolve(&cli_override, None);
+        assert!(resolved_override.cover_sheets);
+        assert_eq!(resolved_override.shard, vec![ShardBy::Event]);
+
+        // When groupifier enables cover sheets and no CLI shard is passed, default to Stage, Event, Group
+        let cli_empty = Cli::try_parse_from(vec!["scorecard-gen", "Comp2026"]).unwrap();
+        let groupifier = GroupifierCompetitionConfig {
+            print_scorecards_cover_sheets: Some(true),
+            ..Default::default()
+        };
+        let resolved_grp = ResolvedOptions::resolve(&cli_empty, Some(&groupifier));
+        assert!(resolved_grp.cover_sheets);
+        assert_eq!(
+            resolved_grp.shard,
+            vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group]
+        );
     }
 
     #[test]

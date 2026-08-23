@@ -1,12 +1,89 @@
+use crate::wcif::{Cutoff, TimeLimit};
 use std::borrow::Cow;
 
+/// Compact, Copy-able metadata about a round's time limit and cutoff.
+/// Captures integer centiseconds and attempt counts without any heap allocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TimeLimitInfo {
+    pub limit_centiseconds: Option<isize>,
+    pub is_cumulative: bool,
+    pub cutoff_centiseconds: Option<isize>,
+    pub cutoff_attempts: usize,
+}
+
+impl TimeLimitInfo {
+    /// Creates a `TimeLimitInfo` from optional WCIF TimeLimit and Cutoff objects.
+    /// Returns `None` if neither a time limit nor a cutoff is present.
+    pub fn from_wcif(time_limit: Option<&TimeLimit>, cutoff: Option<&Cutoff>) -> Option<Self> {
+        if time_limit.is_none() && cutoff.is_none() {
+            return None;
+        }
+
+        Some(Self {
+            limit_centiseconds: time_limit.map(|tl| tl.centiseconds),
+            is_cumulative: time_limit
+                .and_then(|tl| tl.cumulative_round_ids.as_ref())
+                .is_some_and(|ids| !ids.is_empty()),
+            cutoff_centiseconds: cutoff.map(|c| c.attempt_result),
+            cutoff_attempts: cutoff.map(|c| c.number_of_attempts).unwrap_or(0),
+        })
+    }
+
+    /// Formats centiseconds into a human-readable time string (e.g. "1:30.50").
+    /// Returns "None" for values <= 0 (covers WCA sentinels: -1 = DNF, -2 = DNS).
+    pub fn format_centiseconds(centis: isize) -> String {
+        if centis <= 0 {
+            return "None".to_string();
+        }
+        let total_seconds = centis / 100;
+        let cs = centis % 100;
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        if minutes > 0 {
+            if cs > 0 {
+                format!("{}:{:02}.{:02}", minutes, seconds, cs)
+            } else {
+                format!("{}:{:02}.00", minutes, seconds)
+            }
+        } else {
+            format!("{}.{:02}", seconds, cs)
+        }
+    }
+
+    /// Formats the cutoff and time limit info into a display string for scorecard footers.
+    pub fn format_display(&self) -> String {
+        let cutoff_part = self.cutoff_centiseconds.map(|cs| {
+            format!(
+                "Cutoff: < {} ({} att)",
+                Self::format_centiseconds(cs),
+                self.cutoff_attempts
+            )
+        });
+
+        let time_limit_part = self.limit_centiseconds.map(|cs| {
+            let time_str = Self::format_centiseconds(cs);
+            if self.is_cumulative {
+                format!("Time limit: {} cumulative", time_str)
+            } else {
+                format!("Time limit: {}", time_str)
+            }
+        });
+
+        match (cutoff_part, time_limit_part) {
+            (Some(c), Some(t)) => format!("{}  |  {}", c, t),
+            (Some(c), None) => c,
+            (None, Some(t)) => t,
+            (None, None) => String::new(),
+        }
+    }
+}
+
 /// ScorecardItem contains the data needed to render a single scorecard without heap allocations.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScorecardItem<'a> {
     pub scorecard_number: usize,
     pub station_number: Option<usize>,
     pub competition_name: &'a str,
-    #[allow(dead_code)] // Stored for future cover sheet / event-specific formatting use
     pub event_id: &'a str,
     pub event_name: &'static str,
     pub round_number: usize,
@@ -16,11 +93,10 @@ pub struct ScorecardItem<'a> {
     pub registrant_id: Option<usize>,
     pub wca_id: Option<&'a str>,
     pub attempt_count: usize,
-    /// Note: `time_limit_info` is cloned per card within a round. All cards in the same
-    /// round share the same value, so an `Arc<str>` could avoid per-card allocations if
-    /// performance on very large competitions becomes a concern.
-    pub time_limit_info: Option<String>,
+    pub time_limit_info: Option<TimeLimitInfo>,
     pub is_blank: bool,
+    pub is_cover_sheet: bool,
+    pub total_group_cards: usize,
 }
 
 #[cfg(test)]
@@ -41,6 +117,8 @@ impl Default for ScorecardItem<'static> {
             attempt_count: 5,
             time_limit_info: None,
             is_blank: false,
+            is_cover_sheet: false,
+            total_group_cards: 0,
         }
     }
 }
@@ -73,6 +151,11 @@ impl<'a> ScorecardItem<'a> {
         } else {
             Cow::Borrowed(self.competition_name)
         }
+    }
+
+    /// Returns formatted time limit and cutoff info if present.
+    pub fn formatted_time_limit_info(&self) -> Option<String> {
+        self.time_limit_info.map(|info| info.format_display())
     }
 }
 
@@ -119,8 +202,14 @@ impl<'a> ScorecardPlan<'a> {
     }
 
     pub fn assign_scorecard_numbers(&mut self) {
-        for (idx, card) in self.items.iter_mut().enumerate() {
-            card.scorecard_number = idx + 1;
+        let mut num = 1;
+        for card in &mut self.items {
+            if !card.is_cover_sheet {
+                card.scorecard_number = num;
+                num += 1;
+            } else {
+                card.scorecard_number = 0;
+            }
         }
     }
 
