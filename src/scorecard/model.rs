@@ -75,3 +75,124 @@ impl<'a> ScorecardItem<'a> {
         }
     }
 }
+
+/// Summary information for a planned competition round.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlannedRoundSummary {
+    OpenRound {
+        event_id: String,
+        round_number: usize,
+        competitor_count: usize,
+        sample_competitor_names: Vec<String>,
+    },
+    SubsequentRound {
+        event_id: String,
+        round_number: usize,
+        blank_count: usize,
+        reason: String,
+    },
+}
+
+/// ScorecardPlan contains all generated scorecard items along with round summaries and diagnostic notes.
+#[derive(Debug, Clone, Default)]
+pub struct ScorecardPlan<'a> {
+    pub items: Vec<ScorecardItem<'a>>,
+    pub summaries: Vec<PlannedRoundSummary>,
+    pub notes: Vec<String>,
+}
+
+impl<'a> ScorecardPlan<'a> {
+    pub fn new(notes: Vec<String>) -> Self {
+        Self {
+            items: Vec::new(),
+            summaries: Vec::new(),
+            notes,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn assign_scorecard_numbers(&mut self) {
+        for (idx, card) in self.items.iter_mut().enumerate() {
+            card.scorecard_number = idx + 1;
+        }
+    }
+
+    /// Formats the plan summary as a readable string for console output.
+    pub fn format_summary(&self) -> String {
+        let mut out = String::new();
+        for note in &self.notes {
+            out.push_str(&format!("Note: {}\n", note));
+        }
+        out.push_str("\n--- Scorecard Generation Plan ---\n");
+        for summary in &self.summaries {
+            match summary {
+                PlannedRoundSummary::OpenRound {
+                    event_id,
+                    round_number,
+                    competitor_count,
+                    sample_competitor_names,
+                } => {
+                    out.push_str(&format!(
+                        "[{event_id} Round {round_number}] (Open Round) -> Generating scorecards for {competitor_count} accepted competitors\n"
+                    ));
+                    if *competitor_count <= 5 && *competitor_count > 0 {
+                        out.push_str(&format!(
+                            "   Competitors: {}\n",
+                            sample_competitor_names.join(", ")
+                        ));
+                    }
+                }
+                PlannedRoundSummary::SubsequentRound {
+                    event_id,
+                    round_number,
+                    blank_count,
+                    reason,
+                } => {
+                    out.push_str(&format!(
+                        "[{event_id} Round {round_number}] (Subsequent Round) -> Generating {blank_count} blank scorecards ({reason})\n"
+                    ));
+                }
+            }
+        }
+        out.push_str("---------------------------------");
+        out
+    }
+
+    /// Prints the plan summary to stdout.
+    pub fn print_summary(&self) {
+        println!("{}", self.format_summary());
+    }
+}
+
+impl<'a> std::ops::Deref for ScorecardPlan<'a> {
+    type Target = [ScorecardItem<'a>];
+
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
+}
+
+impl<'a> IntoIterator for ScorecardPlan<'a> {
+    type Item = ScorecardItem<'a>;
+    type IntoIter = std::vec::IntoIter<ScorecardItem<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
+    }
+}
+
+impl<'a, 'b> IntoIterator for &'b ScorecardPlan<'a> {
+    type Item = &'b ScorecardItem<'a>;
+    type IntoIter = std::slice::Iter<'b, ScorecardItem<'a>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
+    }
+}

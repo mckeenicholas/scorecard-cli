@@ -196,99 +196,116 @@ impl ResolvedOptions {
     /// Merges default options, WCIF groupifier settings, and explicit CLI flag overrides.
     pub fn resolve(cli: &Cli, groupifier: Option<&GroupifierCompetitionConfig>) -> Self {
         let mut opts = Self::default();
-
-        fn apply<T: Clone>(target: &mut T, src: Option<T>) {
-            if let Some(val) = src {
-                *target = val;
-            }
-        }
-
-        // Layer 1: WCIF Groupifier config
         if let Some(cfg) = groupifier {
-            if let Some(ref p) = cfg.scorecard_paper_size
-                && let Ok(paper) = p.parse::<PaperSize>()
-            {
-                opts.paper = paper;
-            }
-            if let Some(ref o) = cfg.scorecard_order
-                && o.to_lowercase() == "stacked"
-            {
-                opts.format = PageFormat::Stacked;
-            }
-            apply(&mut opts.cover_sheets, cfg.print_scorecards_cover_sheets);
-            apply(&mut opts.local_names_first, cfg.local_names_first);
-            apply(&mut opts.print_one_name, cfg.print_one_name);
-            apply(&mut opts.print_stations, cfg.print_stations);
-            apply(
-                &mut opts.scramble_checker_top_ranked,
-                cfg.print_scramble_checker_for_top_ranked_competitors,
-            );
-            apply(
-                &mut opts.scramble_checker_final_rounds,
-                cfg.print_scramble_checker_for_final_rounds,
-            );
-            apply(
-                &mut opts.scramble_checker_blank,
-                cfg.print_scramble_checker_for_blank_scorecards,
-            );
+            opts.apply_groupifier_config(cfg);
         }
-
-        // Layer 2: Explicit CLI flag overrides
-        apply(&mut opts.paper, cli.paper);
-        apply(&mut opts.format, cli.format);
-        opts.ascii = cli.ascii;
-        apply(&mut opts.cover_sheets, cli.cover_sheets);
-        if let Some(ref s) = cli.shard {
-            opts.shard = s.clone();
-        }
-        // Deduplicate shard dimensions (e.g. --shard event,event)
-        opts.shard.sort_by_key(|s| *s as u8);
-        opts.shard.dedup();
-        apply(&mut opts.local_names_first, cli.local_names_first);
-        apply(&mut opts.print_one_name, cli.print_one_name);
-        apply(&mut opts.print_stations, cli.print_stations);
-        apply(
-            &mut opts.scramble_checker_top_ranked,
-            cli.scramble_checker_top_ranked,
-        );
-        apply(
-            &mut opts.scramble_checker_final_rounds,
-            cli.scramble_checker_final_rounds,
-        );
-        apply(&mut opts.scramble_checker_blank, cli.scramble_checker_blank);
-
+        opts.apply_cli_overrides(cli);
         opts
     }
 
-    /// Prints a human-readable configuration summary table.
-    pub fn print_summary(&self) {
-        println!("\n--- Configuration Summary ---");
-        println!("Paper Size:                  {}", self.paper);
-        println!("Format:                      {}", self.format);
-        println!("ASCII Only:                  {}", self.ascii);
-        println!("Cover Sheets:                {}", self.cover_sheets);
+    /// Layer 1: Merges configuration from WCIF Groupifier extension.
+    fn apply_groupifier_config(&mut self, cfg: &GroupifierCompetitionConfig) {
+        if let Some(ref p) = cfg.scorecard_paper_size
+            && let Ok(paper) = p.parse::<PaperSize>()
+        {
+            self.paper = paper;
+        }
+        if let Some(ref o) = cfg.scorecard_order
+            && o.to_lowercase() == "stacked"
+        {
+            self.format = PageFormat::Stacked;
+        }
+        Self::apply_optional(&mut self.cover_sheets, cfg.print_scorecards_cover_sheets);
+        Self::apply_optional(&mut self.local_names_first, cfg.local_names_first);
+        Self::apply_optional(&mut self.print_one_name, cfg.print_one_name);
+        Self::apply_optional(&mut self.print_stations, cfg.print_stations);
+        Self::apply_optional(
+            &mut self.scramble_checker_top_ranked,
+            cfg.print_scramble_checker_for_top_ranked_competitors,
+        );
+        Self::apply_optional(
+            &mut self.scramble_checker_final_rounds,
+            cfg.print_scramble_checker_for_final_rounds,
+        );
+        Self::apply_optional(
+            &mut self.scramble_checker_blank,
+            cfg.print_scramble_checker_for_blank_scorecards,
+        );
+    }
+
+    /// Layer 2: Applies explicit CLI argument overrides.
+    fn apply_cli_overrides(&mut self, cli: &Cli) {
+        Self::apply_optional(&mut self.paper, cli.paper);
+        Self::apply_optional(&mut self.format, cli.format);
+        self.ascii = cli.ascii;
+        Self::apply_optional(&mut self.cover_sheets, cli.cover_sheets);
+
+        if let Some(ref s) = cli.shard {
+            self.shard = s.clone();
+            self.normalize_shards();
+        }
+
+        Self::apply_optional(&mut self.local_names_first, cli.local_names_first);
+        Self::apply_optional(&mut self.print_one_name, cli.print_one_name);
+        Self::apply_optional(&mut self.print_stations, cli.print_stations);
+        Self::apply_optional(
+            &mut self.scramble_checker_top_ranked,
+            cli.scramble_checker_top_ranked,
+        );
+        Self::apply_optional(
+            &mut self.scramble_checker_final_rounds,
+            cli.scramble_checker_final_rounds,
+        );
+        Self::apply_optional(&mut self.scramble_checker_blank, cli.scramble_checker_blank);
+    }
+
+    fn normalize_shards(&mut self) {
+        self.shard.sort_by_key(|s| *s as u8);
+        self.shard.dedup();
+    }
+
+    fn apply_optional<T: Clone>(target: &mut T, src: Option<T>) {
+        if let Some(val) = src {
+            *target = val;
+        }
+    }
+
+    /// Formats a human-readable configuration summary table.
+    pub fn format_summary(&self) -> String {
+        let mut out = String::new();
+        out.push_str("\n--- Configuration Summary ---\n");
+        out.push_str(&format!("Paper Size:                  {}\n", self.paper));
+        out.push_str(&format!("Format:                      {}\n", self.format));
+        out.push_str(&format!("ASCII Only:                  {}\n", self.ascii));
+        out.push_str(&format!("Cover Sheets:                {}\n", self.cover_sheets));
         if self.shard.is_empty() {
-            println!("Shard By:                    (None - Single PDF)");
+            out.push_str("Shard By:                    (None - Single PDF)\n");
         } else {
             let shard_strs: Vec<String> = self.shard.iter().map(|s| s.to_string()).collect();
-            println!("Shard By:                    {}", shard_strs.join(", "));
+            out.push_str(&format!("Shard By:                    {}\n", shard_strs.join(", ")));
         }
-        println!("Local Names First:           {}", self.local_names_first);
-        println!("Print One Name:              {}", self.print_one_name);
-        println!("Print Stations (Station #):  {}", self.print_stations);
-        println!(
-            "Scramble Chk Top Ranked:     {}",
+        out.push_str(&format!("Local Names First:           {}\n", self.local_names_first));
+        out.push_str(&format!("Print One Name:              {}\n", self.print_one_name));
+        out.push_str(&format!("Print Stations (Station #):  {}\n", self.print_stations));
+        out.push_str(&format!(
+            "Scramble Chk Top Ranked:     {}\n",
             self.scramble_checker_top_ranked
-        );
-        println!(
-            "Scramble Chk Final Rounds:   {}",
+        ));
+        out.push_str(&format!(
+            "Scramble Chk Final Rounds:   {}\n",
             self.scramble_checker_final_rounds
-        );
-        println!(
-            "Scramble Chk Blank Cards:    {}",
+        ));
+        out.push_str(&format!(
+            "Scramble Chk Blank Cards:    {}\n",
             self.scramble_checker_blank
-        );
-        println!("-----------------------------");
+        ));
+        out.push_str("-----------------------------");
+        out
+    }
+
+    /// Prints the human-readable configuration summary table to stdout.
+    pub fn print_summary(&self) {
+        println!("{}", self.format_summary());
     }
 }
 

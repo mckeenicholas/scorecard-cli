@@ -64,6 +64,31 @@ impl ShardKey {
     }
 }
 
+fn build_shard_key(
+    card: &ScorecardItem<'_>,
+    has_stage: bool,
+    has_event: bool,
+    has_group: bool,
+) -> ShardKey {
+    ShardKey {
+        stage: if has_stage {
+            Some(slugify(card.stage_name.unwrap_or("no-stage")))
+        } else {
+            None
+        },
+        event: if has_event {
+            Some(format!("{}-r{}", card.event_id, card.round_number))
+        } else {
+            None
+        },
+        group: if has_group {
+            Some(card.group_number)
+        } else {
+            None
+        },
+    }
+}
+
 fn partition_scorecards<'a>(
     comp_id: &str,
     cards: &'a [ScorecardItem<'a>],
@@ -81,23 +106,7 @@ fn partition_scorecards<'a>(
     let mut map: BTreeMap<ShardKey, Vec<ScorecardItem<'a>>> = BTreeMap::new();
 
     for card in cards {
-        let key = ShardKey {
-            stage: if has_stage {
-                Some(slugify(card.stage_name.unwrap_or("no-stage")))
-            } else {
-                None
-            },
-            event: if has_event {
-                Some(format!("{}-r{}", card.event_id, card.round_number))
-            } else {
-                None
-            },
-            group: if has_group {
-                Some(card.group_number)
-            } else {
-                None
-            },
-        };
+        let key = build_shard_key(card, has_stage, has_event, has_group);
         map.entry(key).or_default().push(card.clone());
     }
 
@@ -130,32 +139,28 @@ fn write_pdf_file(
     Ok(())
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-
-    println!("Loading WCIF from: {}...", cli.comp_source);
-    let comp =
-        WcifLoader::load(&cli.comp_source).map_err(|e| format!("Error loading WCIF: {}", e))?;
-
+fn load_competition(source: &str) -> Result<wcif::Competition, Box<dyn Error>> {
+    println!("Loading WCIF from: {}...", source);
+    let comp = WcifLoader::load(source).map_err(|e| format!("Error loading WCIF: {}", e))?;
     println!("Loaded competition: {} ({})", comp.name, comp.id);
+    Ok(comp)
+}
 
-    // Resolve active options by merging CLI options, WCIF extensions, and defaults
+fn resolve_options(cli: &Cli, comp: &wcif::Competition) -> ResolvedOptions {
     let groupifier_config = comp.get_groupifier_config();
-    let active_opts = ResolvedOptions::resolve(&cli, groupifier_config.as_ref());
+    let active_opts = ResolvedOptions::resolve(cli, groupifier_config.as_ref());
     active_opts.print_summary();
+    active_opts
+}
 
-    // Plan scorecards according to requested events or open rounds
-    let scorecards = ScorecardPlanner::plan(&comp, &cli.events)?;
-
-    if scorecards.is_empty() {
-        println!("No scorecards to generate.");
-        return Ok(());
-    }
-
-    let layout = PageLayout::new(active_opts.paper);
-    let generator = PdfGenerator::with_format(layout, active_opts.format);
-
-    let partitions = partition_scorecards(&comp.id, &scorecards, &active_opts.shard);
+fn generate_partitioned_pdfs(
+    comp: &wcif::Competition,
+    cards: &[ScorecardItem<'_>],
+    options: &ResolvedOptions,
+) -> Result<(), Box<dyn Error>> {
+    let layout = PageLayout::new(options.paper);
+    let generator = PdfGenerator::with_format(layout, options.format);
+    let partitions = partition_scorecards(&comp.id, cards, &options.shard);
     let is_multi = partitions.len() > 1;
 
     if is_multi {
@@ -163,7 +168,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     for (out_filename, shard_cards) in &partitions {
-        write_pdf_file(&generator, &comp, out_filename, shard_cards)?;
+        write_pdf_file(&generator, comp, out_filename, shard_cards)?;
         if is_multi {
             println!(
                 "  [+] Generated {} ({} cards)",
@@ -181,6 +186,23 @@ fn run() -> Result<(), Box<dyn Error>> {
             partitions.len()
         );
     }
+
+    Ok(())
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
+    let comp = load_competition(&cli.comp_source)?;
+    let active_opts = resolve_options(&cli, &comp);
+    let plan = ScorecardPlanner::plan(&comp, &cli.events)?;
+
+    if plan.is_empty() {
+        println!("No scorecards to generate.");
+        return Ok(());
+    }
+
+    plan.print_summary();
+    generate_partitioned_pdfs(&comp, &plan.items, &active_opts)?;
 
     Ok(())
 }

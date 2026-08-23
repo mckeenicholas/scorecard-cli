@@ -20,10 +20,7 @@ pub struct AdvancementCalculator;
 impl AdvancementCalculator {
     /// Calculates the number of blank scorecards needed for a subsequent round based on WCA rules.
     pub fn calculate_blanks(comp: &Competition, event: &Event, round: &Round) -> AdvancementResult {
-        let round_idx = event.rounds.iter().position(|r| r.id == round.id);
-        let prev_idx = round_idx.and_then(|idx| idx.checked_sub(1));
-
-        let Some(prev_idx) = prev_idx else {
+        let Some(prev_idx) = Self::find_previous_round_index(event, round) else {
             return default_result("no previous round found, defaulted to 16 blanks");
         };
 
@@ -35,35 +32,57 @@ impl AdvancementCalculator {
         };
 
         match cond.condition_type.as_str() {
-            "ranking" => {
-                let val = cond.value.unwrap_or(16.0) as usize;
-                let pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
-                let capped = val.min(pool);
-                AdvancementResult {
-                    blank_count: capped,
-                    reason: format!(
-                        "based on ranking advancement limit of top {} from previous round",
-                        capped
-                    ),
-                }
-            }
-            "percent" => {
-                let percent = cond.value.unwrap_or(75.0);
-                let prev_pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
-                let calculated = (prev_pool as f64 * percent / 100.0).round() as usize;
-                AdvancementResult {
-                    blank_count: calculated,
-                    reason: format!(
-                        "based on percentage advancement of {}% of ~{} competitors ({} blanks)",
-                        percent, prev_pool, calculated
-                    ),
-                }
-            }
+            "ranking" => Self::calculate_ranking_advancement(cond.value, comp, event, prev_idx),
+            "percent" => Self::calculate_percent_advancement(cond.value, comp, event, prev_idx),
             "attemptResult" => default_result("cutoff-based advancement, defaulted to 16 blanks"),
             other => default_result(format!(
                 "advancement condition type {:?}, defaulted to 16 blanks",
                 other
             )),
+        }
+    }
+
+    fn find_previous_round_index(event: &Event, round: &Round) -> Option<usize> {
+        event
+            .rounds
+            .iter()
+            .position(|r| r.id == round.id)
+            .and_then(|idx| idx.checked_sub(1))
+    }
+
+    fn calculate_ranking_advancement(
+        val: Option<f64>,
+        comp: &Competition,
+        event: &Event,
+        prev_idx: usize,
+    ) -> AdvancementResult {
+        let limit = val.unwrap_or(16.0) as usize;
+        let pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
+        let capped = limit.min(pool);
+        AdvancementResult {
+            blank_count: capped,
+            reason: format!(
+                "based on ranking advancement limit of top {} from previous round",
+                capped
+            ),
+        }
+    }
+
+    fn calculate_percent_advancement(
+        percent_val: Option<f64>,
+        comp: &Competition,
+        event: &Event,
+        prev_idx: usize,
+    ) -> AdvancementResult {
+        let percent = percent_val.unwrap_or(75.0);
+        let prev_pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
+        let calculated = (prev_pool as f64 * percent / 100.0).round() as usize;
+        AdvancementResult {
+            blank_count: calculated,
+            reason: format!(
+                "based on percentage advancement of {}% of ~{} competitors ({} blanks)",
+                percent, prev_pool, calculated
+            ),
         }
     }
 

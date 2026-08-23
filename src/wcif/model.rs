@@ -26,6 +26,11 @@ pub struct ScheduledActivityInfo<'a> {
 }
 
 impl Competition {
+    /// Deserializes a Competition struct from raw JSON bytes.
+    pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(bytes)
+    }
+
     /// Returns the display name for the competition (short_name if available, else name).
     pub fn display_name(&self) -> &str {
         self.short_name.as_deref().unwrap_or(&self.name)

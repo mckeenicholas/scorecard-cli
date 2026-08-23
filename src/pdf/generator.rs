@@ -38,54 +38,77 @@ impl PdfGenerator {
         cards: &[ScorecardItem<'_>],
         writer: &mut W,
     ) -> Result<(), Box<dyn Error>> {
-        let layout = self.layout;
-        let format = self.format;
+        let pages = self.build_pages(cards);
+        let doc = Self::build_pdf_document(&comp.name, pages);
+        Self::save_document_to_writer(&doc, writer);
+        Ok(())
+    }
 
-        // Parallel chunk processing across CPU cores with Rayon
-        let pages: Vec<PdfPage> = if format == PageFormat::Stacked && layout.cards_per_page > 1 {
-            let total_cards = cards.len();
-            let k = layout.cards_per_page;
-            let total_pages = total_cards.div_ceil(k);
-
-            (0..total_pages)
-                .into_par_iter()
-                .map(|page_idx| {
-                    let mut ops = Vec::with_capacity(256);
-                    for slot in 0..k {
-                        let card_idx = slot * total_pages + page_idx;
-                        if card_idx < total_cards {
-                            let card = &cards[card_idx];
-                            let rect = layout.card_rect(slot);
-                            ScorecardRenderer::draw_card(
-                                &mut ops, card, rect.x, rect.y, rect.w, rect.h,
-                            );
-                        }
-                    }
-                    PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
-                })
-                .collect()
+    /// Builds all PDF pages using parallel Rayon chunk processing.
+    pub fn build_pages(&self, cards: &[ScorecardItem<'_>]) -> Vec<PdfPage> {
+        if self.format == PageFormat::Stacked && self.layout.cards_per_page > 1 {
+            self.build_stacked_pages(cards)
         } else {
-            cards
-                .par_chunks(layout.cards_per_page)
-                .map(|chunk| {
-                    let mut ops =
-                        Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });
+            self.build_grouped_pages(cards)
+        }
+    }
 
-                    for (idx, card) in chunk.iter().enumerate() {
-                        let rect = layout.card_rect(idx);
+    /// Generates pages in stacked cutting order (card N on page P is followed by N+1 on page P at the same slot).
+    fn build_stacked_pages(&self, cards: &[ScorecardItem<'_>]) -> Vec<PdfPage> {
+        let layout = self.layout;
+        let total_cards = cards.len();
+        let k = layout.cards_per_page;
+        let total_pages = total_cards.div_ceil(k);
+
+        (0..total_pages)
+            .into_par_iter()
+            .map(|page_idx| {
+                let mut ops = Vec::with_capacity(256);
+                for slot in 0..k {
+                    let card_idx = slot * total_pages + page_idx;
+                    if card_idx < total_cards {
+                        let card = &cards[card_idx];
+                        let rect = layout.card_rect(slot);
                         ScorecardRenderer::draw_card(
                             &mut ops, card, rect.x, rect.y, rect.w, rect.h,
                         );
                     }
+                }
+                PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
+            })
+            .collect()
+    }
 
-                    PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
-                })
-                .collect()
-        };
+    /// Generates pages sequentially chunked by cards_per_page.
+    fn build_grouped_pages(&self, cards: &[ScorecardItem<'_>]) -> Vec<PdfPage> {
+        let layout = self.layout;
+        cards
+            .par_chunks(layout.cards_per_page)
+            .map(|chunk| {
+                let mut ops =
+                    Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });
 
-        let mut doc = PdfDocument::new(&comp.name);
+                for (idx, card) in chunk.iter().enumerate() {
+                    let rect = layout.card_rect(idx);
+                    ScorecardRenderer::draw_card(
+                        &mut ops, card, rect.x, rect.y, rect.w, rect.h,
+                    );
+                }
+
+                PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
+            })
+            .collect()
+    }
+
+    /// Assembles a PdfDocument model from a list of generated PdfPages.
+    fn build_pdf_document(title: &str, pages: Vec<PdfPage>) -> PdfDocument {
+        let mut doc = PdfDocument::new(title);
         doc.pages = pages;
+        doc
+    }
 
+    /// Serializes the document to the writer using fast options without extra compression passes.
+    fn save_document_to_writer<W: Write>(doc: &PdfDocument, writer: &mut W) {
         let save_options = PdfSaveOptions {
             optimize: false, // Disable expensive extra compression passes for maximum speed
             ..Default::default()
@@ -93,8 +116,6 @@ impl PdfGenerator {
 
         let mut warnings = Vec::new();
         doc.save_writer(writer, &save_options, &mut warnings);
-
-        Ok(())
     }
 
     /// Generates a PDF containing all scorecards into a byte buffer.

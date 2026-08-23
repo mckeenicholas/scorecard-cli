@@ -1,5 +1,5 @@
 use super::events::event_name_by_id;
-use super::model::ScorecardItem;
+use super::model::{PlannedRoundSummary, ScorecardItem, ScorecardPlan};
 use crate::wcif::{
     AdvancementCalculator, Competition, Cutoff, Event, Person, Round, ScheduledActivityInfo,
     TimeLimit,
@@ -20,24 +20,9 @@ fn parse_event_arg(arg: &str) -> (String, usize) {
     let mut parts = arg.split('-');
     let event_id = parts.next().unwrap_or(arg).to_string();
     let round_num = match parts.next() {
-        Some(r) => match r.trim_start_matches('r').parse::<usize>() {
-            Ok(n) => n,
-            Err(_) => {
-                eprintln!(
-                    "Warning: unrecognized round specifier '{}' in '{}', defaulting to round 1",
-                    r, arg
-                );
-                1
-            }
-        },
+        Some(r) => r.trim_start_matches('r').parse::<usize>().unwrap_or(1),
         None => 1,
     };
-    if parts.next().is_some() {
-        eprintln!(
-            "Warning: ignoring extra segments in event argument '{}'",
-            arg
-        );
-    }
     (event_id, round_num)
 }
 
@@ -129,143 +114,134 @@ fn resolve_assignment<'a>(
         if let Some(info) = activity_map.get(&assign.activity_id)
             && let Some(stripped) = info.activity_code.strip_prefix(target_prefix)
         {
-            let group_num: usize = stripped.parse().unwrap_or_else(|_| {
-                eprintln!(
-                    "Warning: non-numeric group suffix '{}' in activity code, defaulting to group 1",
-                    stripped
-                );
-                1
-            });
+            let group_num: usize = stripped.parse().unwrap_or(1);
             return (group_num, assign.station_number, info.room_name);
         }
     }
     (1, None, None)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn plan_open_round<'a>(
+struct RoundPlanningContext<'a, 'b> {
     comp: &'a Competition,
-    target: &GenerationTarget,
-    matched_event: &'a Event,
-    matched_round: &'a Round,
+    target: &'b GenerationTarget,
+    event: &'a Event,
+    round: &'a Round,
     event_name: &'static str,
     attempt_count: usize,
-    activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
-    scorecards: &mut Vec<ScorecardItem<'a>>,
+    activity_map: &'b FxHashMap<usize, ScheduledActivityInfo<'a>>,
+}
+
+fn plan_open_round<'a>(
+    ctx: &RoundPlanningContext<'a, '_>,
+    plan: &mut ScorecardPlan<'a>,
 ) {
-    let target_prefix = format!("{}-g", target.round_id);
-    let comp_name = comp.display_name();
+    let target_prefix = format!("{}-g", ctx.target.round_id);
+    let comp_name = ctx.comp.display_name();
     let time_limit_info = format_limit_and_cutoff(
-        matched_round.time_limit.as_ref(),
-        matched_round.cutoff.as_ref(),
+        ctx.round.time_limit.as_ref(),
+        ctx.round.cutoff.as_ref(),
     );
     let mut count = 0;
-    let mut names = Vec::new();
+    let mut sample_names = Vec::new();
 
-    for person in comp.accepted_competitors_for_event(&matched_event.id) {
+    for person in ctx.comp.accepted_competitors_for_event(&ctx.event.id) {
         count += 1;
         if count <= 5 {
-            names.push(person.name.as_str());
+            sample_names.push(person.name.clone());
         }
 
         let (group_num, station_num, stage_name) =
-            resolve_assignment(person, activity_map, &target_prefix);
+            resolve_assignment(person, ctx.activity_map, &target_prefix);
 
-        scorecards.push(ScorecardItem {
+        plan.items.push(ScorecardItem {
             scorecard_number: 0,
             station_number: station_num,
             competition_name: comp_name,
-            event_id: &matched_event.id,
-            event_name,
-            round_number: target.round_number,
+            event_id: &ctx.event.id,
+            event_name: ctx.event_name,
+            round_number: ctx.target.round_number,
             group_number: group_num,
             stage_name,
             competitor_name: person.name.as_str(),
             registrant_id: person.registrant_id(),
             wca_id: person.wca_id.as_deref(),
-            attempt_count,
+            attempt_count: ctx.attempt_count,
             time_limit_info: time_limit_info.clone(),
             is_blank: false,
         });
     }
 
-    println!(
-        "[{event_id} Round {round_num}] (Open Round) -> Generating scorecards for {count} accepted competitors",
-        event_id = target.event_id,
-        round_num = target.round_number,
-    );
-    if count <= 5 && count > 0 {
-        println!("   Competitors: {}", names.join(", "));
-    }
+    plan.summaries.push(PlannedRoundSummary::OpenRound {
+        event_id: ctx.target.event_id.clone(),
+        round_number: ctx.target.round_number,
+        competitor_count: count,
+        sample_competitor_names: sample_names,
+    });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn plan_subsequent_round<'a>(
-    comp: &'a Competition,
-    target: &GenerationTarget,
-    matched_event: &'a Event,
-    matched_round: &'a Round,
-    event_name: &'static str,
-    attempt_count: usize,
-    activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
-    scorecards: &mut Vec<ScorecardItem<'a>>,
+    ctx: &RoundPlanningContext<'a, '_>,
+    plan: &mut ScorecardPlan<'a>,
 ) {
-    let adv_result = AdvancementCalculator::calculate_blanks(comp, matched_event, matched_round);
-    println!(
-        "[{event_id} Round {round_num}] (Subsequent Round) -> Generating {blank_count} blank scorecards ({reason})",
-        event_id = target.event_id,
-        round_num = target.round_number,
-        blank_count = adv_result.blank_count,
-        reason = adv_result.reason
-    );
+    let adv_result = AdvancementCalculator::calculate_blanks(ctx.comp, ctx.event, ctx.round);
 
-    let round_stage = activity_map
+    let round_stage = ctx.activity_map
         .values()
         .find(|info| {
-            info.activity_code == target.round_id
+            info.activity_code == ctx.target.round_id
                 || info
                     .activity_code
-                    .starts_with(&format!("{}-g", target.round_id))
+                    .starts_with(&format!("{}-g", ctx.target.round_id))
         })
         .and_then(|info| info.room_name);
 
-    let comp_name = comp.display_name();
+    let comp_name = ctx.comp.display_name();
     let time_limit_info = format_limit_and_cutoff(
-        matched_round.time_limit.as_ref(),
-        matched_round.cutoff.as_ref(),
+        ctx.round.time_limit.as_ref(),
+        ctx.round.cutoff.as_ref(),
     );
+
     for _ in 0..adv_result.blank_count {
-        scorecards.push(ScorecardItem {
+        plan.items.push(ScorecardItem {
             scorecard_number: 0,
             station_number: None,
             competition_name: comp_name,
-            event_id: &matched_event.id,
-            event_name,
-            round_number: target.round_number,
+            event_id: &ctx.event.id,
+            event_name: ctx.event_name,
+            round_number: ctx.target.round_number,
             group_number: 1,
             stage_name: round_stage,
             competitor_name: "",
             registrant_id: None,
             wca_id: None,
-            attempt_count,
+            attempt_count: ctx.attempt_count,
             time_limit_info: time_limit_info.clone(),
             is_blank: true,
         });
     }
+
+    plan.summaries.push(PlannedRoundSummary::SubsequentRound {
+        event_id: ctx.target.event_id.clone(),
+        round_number: ctx.target.round_number,
+        blank_count: adv_result.blank_count,
+        reason: adv_result.reason,
+    });
 }
 
 /// Planner responsible for extracting competitor assignments, calculating advancement blanks, and sequencing scorecards.
 pub struct ScorecardPlanner;
 
 impl ScorecardPlanner {
-    /// Resolves generation targets from CLI arguments (or all open rounds if none specified).
+    /// Resolves generation targets from CLI arguments (or all open rounds if none specified), returning targets and any diagnostic notes.
     /// Omits events that do not use scorecards (such as 3x3x3 Fewest Moves - 333fm).
     pub fn resolve_targets(
         comp: &Competition,
         requested_events: &[String],
-    ) -> Vec<GenerationTarget> {
+    ) -> (Vec<GenerationTarget>, Vec<String>) {
+        let mut notes = Vec::new();
+
         if requested_events.is_empty() {
-            return comp
+            let targets = comp
                 .events
                 .iter()
                 .filter(|e| e.id != "333fm")
@@ -277,15 +253,17 @@ impl ScorecardPlanner {
                     is_open_round: true,
                 })
                 .collect();
+            return (targets, notes);
         }
 
-        requested_events
+        let targets = requested_events
             .iter()
             .filter_map(|arg| {
                 let (event_id, round_num) = parse_event_arg(arg);
                 if event_id == "333fm" {
-                    println!(
-                        "Note: Skipping '333fm' (3x3x3 Fewest Moves) as it does not use scorecards."
+                    notes.push(
+                        "Skipping '333fm' (3x3x3 Fewest Moves) as it does not use scorecards."
+                            .to_string(),
                     );
                     return None;
                 }
@@ -299,56 +277,55 @@ impl ScorecardPlanner {
                     is_open_round: round_num == 1,
                 })
             })
-            .collect()
+            .collect();
+
+        (targets, notes)
     }
 
     /// Plans and builds all required scorecards for the competition given the requested events.
     pub fn plan<'a>(
         comp: &'a Competition,
         requested_events: &[String],
-    ) -> Result<Vec<ScorecardItem<'a>>, Box<dyn Error>> {
-        let targets = Self::resolve_targets(comp, requested_events);
+    ) -> Result<ScorecardPlan<'a>, Box<dyn Error>> {
+        let (targets, notes) = Self::resolve_targets(comp, requested_events);
         let activity_map = comp.build_activity_schedule_map();
-        let mut scorecards = Vec::with_capacity(comp.persons.len() * targets.len().max(1));
+        let mut plan = ScorecardPlan::new(notes);
 
-        println!("\n--- Scorecard Generation Plan ---");
         for target in &targets {
-            let (matched_event, matched_round) = find_event_and_round(comp, target)?;
-            let event_name = event_name_by_id(&target.event_id).ok_or_else(|| {
-                format!("unknown or unsupported WCA event ID: '{}'", target.event_id)
-            })?;
-            let attempt_count = matched_round.attempt_count();
-
-            if target.is_open_round {
-                plan_open_round(
-                    comp,
-                    target,
-                    matched_event,
-                    matched_round,
-                    event_name,
-                    attempt_count,
-                    &activity_map,
-                    &mut scorecards,
-                );
-            } else {
-                plan_subsequent_round(
-                    comp,
-                    target,
-                    matched_event,
-                    matched_round,
-                    event_name,
-                    attempt_count,
-                    &activity_map,
-                    &mut scorecards,
-                );
-            }
-        }
-        println!("---------------------------------");
-
-        for (idx, card) in scorecards.iter_mut().enumerate() {
-            card.scorecard_number = idx + 1;
+            Self::plan_target_round(comp, target, &activity_map, &mut plan)?;
         }
 
-        Ok(scorecards)
+        plan.assign_scorecard_numbers();
+        Ok(plan)
+    }
+
+    fn plan_target_round<'a>(
+        comp: &'a Competition,
+        target: &GenerationTarget,
+        activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
+        plan: &mut ScorecardPlan<'a>,
+    ) -> Result<(), Box<dyn Error>> {
+        let (event, round) = find_event_and_round(comp, target)?;
+        let event_name = event_name_by_id(&target.event_id).ok_or_else(|| {
+            format!("unknown or unsupported WCA event ID: '{}'", target.event_id)
+        })?;
+        let attempt_count = round.attempt_count();
+
+        let ctx = RoundPlanningContext {
+            comp,
+            target,
+            event,
+            round,
+            event_name,
+            attempt_count,
+            activity_map,
+        };
+
+        if target.is_open_round {
+            plan_open_round(&ctx, plan);
+        } else {
+            plan_subsequent_round(&ctx, plan);
+        }
+        Ok(())
     }
 }

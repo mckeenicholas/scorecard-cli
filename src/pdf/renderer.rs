@@ -234,6 +234,54 @@ impl<'a> CardPainter<'a> {
         );
     }
 
+    /// Draws the event, round, group, and station info grid table.
+    pub fn draw_event_info_table(&mut self, card: &ScorecardItem<'_>) {
+        let mut station_buf = itoa::Buffer::new();
+        let station_val = card
+            .station_number
+            .map(|s| station_buf.format(s))
+            .unwrap_or("-");
+
+        let mut round_buf = itoa::Buffer::new();
+        let round_str = round_buf.format(card.round_number);
+
+        let mut group_buf = itoa::Buffer::new();
+        let group_str = group_buf.format(card.group_number);
+
+        self.draw_grid_table(
+            12.0,
+            13.0,
+            &[
+                ("Event", 0.38, TextAlign::Left),
+                ("Round", 0.20, TextAlign::Center),
+                ("Group", 0.20, TextAlign::Center),
+                ("Station", 0.22, TextAlign::Center),
+            ],
+            &[&[card.event_name, round_str, group_str, station_val]],
+        );
+    }
+
+    /// Draws the competitor ID and name grid table.
+    pub fn draw_competitor_info_table(&mut self, card: &ScorecardItem<'_>) {
+        self.advance_y(5.0);
+        let mut id_buf = itoa::Buffer::new();
+        let id_val = card
+            .registrant_id
+            .map(|id| id_buf.format(id))
+            .unwrap_or("-");
+        let name_val = card.display_competitor_name();
+
+        self.draw_grid_table(
+            12.0,
+            14.0,
+            &[
+                ("ID", 0.20, TextAlign::Center),
+                ("Competitor Name", 0.80, TextAlign::Left),
+            ],
+            &[&[id_val, &name_val]],
+        );
+    }
+
     /// Draws the attempt table dynamically sized to fill the remaining scorecard height, plus bottom cutoff/time limit footer.
     pub fn draw_attempt_table(&mut self, attempt_count: usize, time_limit_info: Option<&str>) {
         self.advance_y(5.0);
@@ -272,20 +320,24 @@ impl<'a> CardPainter<'a> {
         self.draw_grid_table(header_h, row_h, &ATTEMPT_COLUMNS, rows);
 
         if let Some(info) = time_limit_info {
-            let footer_y = (self.cur_y + self.min_y) / 2.0 - 2.0;
-            TextDrawer::draw(
-                self.ops,
-                TextSpec {
-                    text: info,
-                    cell_x: self.inner_x,
-                    baseline_y: footer_y,
-                    cell_w: self.inner_w,
-                    font_size: 7.0,
-                    bold: false,
-                    align: TextAlign::Center,
-                },
-            );
+            self.draw_attempt_footer(info);
         }
+    }
+
+    fn draw_attempt_footer(&mut self, info: &str) {
+        let footer_y = (self.cur_y + self.min_y) / 2.0 - 2.0;
+        TextDrawer::draw(
+            self.ops,
+            TextSpec {
+                text: info,
+                cell_x: self.inner_x,
+                baseline_y: footer_y,
+                cell_w: self.inner_w,
+                font_size: 7.0,
+                bold: false,
+                align: TextAlign::Center,
+            },
+        );
     }
 }
 
@@ -297,58 +349,10 @@ impl ScorecardRenderer {
     pub fn draw_card(ops: &mut Vec<Op>, card: &ScorecardItem<'_>, x: f32, y: f32, w: f32, h: f32) {
         let mut painter = CardPainter::new(ops, x, y, w, h, &DEFAULT_THEME);
 
-        // 1. Outer boundary box
         painter.draw_outer_border();
-
-        // 2. Top header: number in top-left, competition name centered
-        let comp_name = card.truncated_competition_name(30);
-        painter.draw_top_header(card.scorecard_number, &comp_name);
-
-        // 3. Table 1: Event / Round / Group / Station
-        let mut station_buf = itoa::Buffer::new();
-        let station_val = card
-            .station_number
-            .map(|s| station_buf.format(s))
-            .unwrap_or("-");
-
-        let mut round_buf = itoa::Buffer::new();
-        let round_str = round_buf.format(card.round_number);
-
-        let mut group_buf = itoa::Buffer::new();
-        let group_str = group_buf.format(card.group_number);
-
-        painter.draw_grid_table(
-            12.0,
-            13.0,
-            &[
-                ("Event", 0.38, TextAlign::Left),
-                ("Round", 0.20, TextAlign::Center),
-                ("Group", 0.20, TextAlign::Center),
-                ("Station", 0.22, TextAlign::Center),
-            ],
-            &[&[card.event_name, round_str, group_str, station_val]],
-        );
-
-        // 4. Table 2: ID / Competitor Name
-        painter.advance_y(5.0);
-        let mut id_buf = itoa::Buffer::new();
-        let id_val = card
-            .registrant_id
-            .map(|id| id_buf.format(id))
-            .unwrap_or("-");
-        let name_val = card.display_competitor_name();
-
-        painter.draw_grid_table(
-            12.0,
-            14.0,
-            &[
-                ("ID", 0.20, TextAlign::Center),
-                ("Competitor Name", 0.80, TextAlign::Left),
-            ],
-            &[&[id_val, &name_val]],
-        );
-
-        // 5. Table 3: Attempt Log and bottom Cutoff / Time limit info
+        painter.draw_top_header(card.scorecard_number, &card.truncated_competition_name(30));
+        painter.draw_event_info_table(card);
+        painter.draw_competitor_info_table(card);
         painter.draw_attempt_table(card.attempt_count, card.time_limit_info.as_deref());
     }
 }
@@ -357,12 +361,26 @@ impl ScorecardRenderer {
 pub struct TableDrawer;
 
 impl TableDrawer {
+    /// Draws a styled grid table, advancing cur_y to the bottom of the table.
     pub fn draw(ops: &mut Vec<Op>, cur_y: &mut f32, spec: TableSpec<'_>, theme: &ScorecardTheme) {
         let top_y = *cur_y;
         let total_h = spec.header_h + spec.row_h * (spec.rows.len() as f32);
         let bottom_y = top_y - total_h;
 
-        // 1. Header background fill
+        Self::draw_header_background(ops, &spec, top_y, theme);
+        Self::draw_header_text(ops, &spec, top_y, theme);
+        Self::draw_row_cells(ops, &spec, top_y, theme);
+        Self::draw_grid_lines(ops, &spec, top_y, bottom_y, total_h, theme);
+
+        *cur_y = bottom_y;
+    }
+
+    fn draw_header_background(
+        ops: &mut Vec<Op>,
+        spec: &TableSpec<'_>,
+        top_y: f32,
+        theme: &ScorecardTheme,
+    ) {
         ops.push(Op::SetFillColor {
             col: Color::Greyscale(Greyscale::new(theme.header_bg_grey, None)),
         });
@@ -376,13 +394,18 @@ impl TableDrawer {
                 winding_order: None,
             },
         });
+    }
 
-        // 2. Header text
+    fn draw_header_text(
+        ops: &mut Vec<Op>,
+        spec: &TableSpec<'_>,
+        top_y: f32,
+        theme: &ScorecardTheme,
+    ) {
         let mut col_x = spec.tbl_x;
+        let text_y = top_y - spec.header_h + (spec.header_h - theme.header_font_size) / 2.0 + 1.0;
         for (i, &header) in spec.headers.iter().enumerate() {
             let w = spec.col_widths[i];
-            let text_y =
-                top_y - spec.header_h + (spec.header_h - theme.header_font_size) / 2.0 + 1.0;
             let align = spec.alignments.get(i).copied().unwrap_or(TextAlign::Center);
             TextDrawer::draw(
                 ops,
@@ -398,8 +421,14 @@ impl TableDrawer {
             );
             col_x += w;
         }
+    }
 
-        // 3. Row data text
+    fn draw_row_cells(
+        ops: &mut Vec<Op>,
+        spec: &TableSpec<'_>,
+        top_y: f32,
+        theme: &ScorecardTheme,
+    ) {
         let mut row_top = top_y - spec.header_h;
         for &row in spec.rows {
             let mut cell_x = spec.tbl_x;
@@ -423,16 +452,37 @@ impl TableDrawer {
             }
             row_top -= spec.row_h;
         }
+    }
 
-        // 4. Grid lines (Borders)
+    fn draw_grid_lines(
+        ops: &mut Vec<Op>,
+        spec: &TableSpec<'_>,
+        top_y: f32,
+        bottom_y: f32,
+        total_h: f32,
+        theme: &ScorecardTheme,
+    ) {
+        Self::set_grid_stroke_style(ops, theme);
+        Self::draw_outer_table_border(ops, spec, bottom_y, total_h);
+        Self::draw_horizontal_dividers(ops, spec, top_y);
+        Self::draw_vertical_dividers(ops, spec, top_y, bottom_y);
+    }
+
+    fn set_grid_stroke_style(ops: &mut Vec<Op>, theme: &ScorecardTheme) {
         ops.push(Op::SetOutlineColor {
             col: Color::Greyscale(Greyscale::new(theme.grid_line_grey, None)),
         });
         ops.push(Op::SetOutlineThickness {
             pt: Pt(theme.grid_line_thickness),
         });
+    }
 
-        // Outer table border
+    fn draw_outer_table_border(
+        ops: &mut Vec<Op>,
+        spec: &TableSpec<'_>,
+        bottom_y: f32,
+        total_h: f32,
+    ) {
         ops.push(Op::DrawRectangle {
             rectangle: Rect {
                 x: Pt(spec.tbl_x),
@@ -443,8 +493,10 @@ impl TableDrawer {
                 winding_order: None,
             },
         });
+    }
 
-        // Horizontal line after header
+    fn draw_horizontal_dividers(ops: &mut Vec<Op>, spec: &TableSpec<'_>, top_y: f32) {
+        // Line after header
         Self::draw_line(
             ops,
             spec.tbl_x,
@@ -453,21 +505,25 @@ impl TableDrawer {
             top_y - spec.header_h,
         );
 
-        // Horizontal lines between rows
+        // Lines between rows
         let mut line_y = top_y - spec.header_h - spec.row_h;
         for _ in 1..spec.rows.len() {
             Self::draw_line(ops, spec.tbl_x, line_y, spec.tbl_x + spec.tbl_w, line_y);
             line_y -= spec.row_h;
         }
+    }
 
-        // Vertical column separator lines
+    fn draw_vertical_dividers(
+        ops: &mut Vec<Op>,
+        spec: &TableSpec<'_>,
+        top_y: f32,
+        bottom_y: f32,
+    ) {
         let mut sep_x = spec.tbl_x;
         for &w in &spec.col_widths[..spec.col_widths.len() - 1] {
             sep_x += w;
             Self::draw_line(ops, sep_x, top_y, sep_x, bottom_y);
         }
-
-        *cur_y = bottom_y;
     }
 
     /// Draws a line between two points.
@@ -506,35 +562,52 @@ impl TextDrawer {
         if spec.text.is_empty() {
             return;
         }
-        let font = if spec.bold {
+        let font = Self::resolve_font(spec.bold);
+        let text_w = Self::estimate_width(spec.text, spec.font_size);
+        let x = Self::compute_aligned_x(spec.align, spec.cell_x, spec.cell_w, text_w);
+        Self::emit_text_ops(ops, font, spec.font_size, x, spec.baseline_y, spec.text);
+    }
+
+    fn resolve_font(bold: bool) -> PdfFontHandle {
+        if bold {
             PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
         } else {
             PdfFontHandle::Builtin(BuiltinFont::Helvetica)
-        };
+        }
+    }
 
-        let text_w = Self::estimate_width(spec.text, spec.font_size);
+    fn compute_aligned_x(align: TextAlign, cell_x: f32, cell_w: f32, text_w: f32) -> f32 {
         let pad = 3.0;
-        let x = match spec.align {
-            TextAlign::Left => spec.cell_x + pad,
-            TextAlign::Center => spec.cell_x + (spec.cell_w - text_w).max(0.0) / 2.0,
-        };
+        match align {
+            TextAlign::Left => cell_x + pad,
+            TextAlign::Center => cell_x + (cell_w - text_w).max(0.0) / 2.0,
+        }
+    }
 
+    fn emit_text_ops(
+        ops: &mut Vec<Op>,
+        font: PdfFontHandle,
+        font_size: f32,
+        x: f32,
+        y: f32,
+        text: &str,
+    ) {
         ops.push(Op::SetFillColor {
             col: Color::Greyscale(Greyscale::new(0.0, None)),
         });
         ops.push(Op::StartTextSection);
         ops.push(Op::SetFont {
             font,
-            size: Pt(spec.font_size),
+            size: Pt(font_size),
         });
         ops.push(Op::SetTextCursor {
             pos: Point {
                 x: Pt(x),
-                y: Pt(spec.baseline_y),
+                y: Pt(y),
             },
         });
         ops.push(Op::ShowText {
-            items: vec![TextItem::Text(spec.text.to_string())],
+            items: vec![TextItem::Text(text.to_string())],
         });
         ops.push(Op::EndTextSection);
     }
@@ -606,8 +679,9 @@ mod tests {
 
     #[test]
     fn test_theme_defaults() {
-        assert_eq!(DEFAULT_THEME.padding, 7.0);
-        assert_eq!(DEFAULT_THEME.border_thickness, 0.75);
-        assert!(DEFAULT_THEME.title_font_size > DEFAULT_THEME.header_font_size);
+        let theme = DEFAULT_THEME;
+        assert_eq!(theme.padding, 7.0);
+        assert_eq!(theme.border_thickness, 0.75);
+        assert!(theme.title_font_size > theme.header_font_size);
     }
 }

@@ -80,6 +80,96 @@ impl fmt::Display for PageFormat {
 /// Margin used for A6 single-card layouts (in PDF points).
 const A6_MARGIN: f32 = 14.0;
 
+/// Default page margin for multi-card grid layouts (in PDF points).
+const DEFAULT_GRID_MARGIN: f32 = 18.0;
+
+/// Default gap between cards in multi-card grid layouts (in PDF points).
+const DEFAULT_GRID_GAP: f32 = 12.0;
+
+impl PaperSize {
+    const A6_MM: (f32, f32) = (105.0, 148.0);
+    const A4_MM: (f32, f32) = (210.0, 297.0);
+    const LETTER_MM: (f32, f32) = (215.9, 279.4);
+
+    const MM_TO_PT: f32 = 2.834_645_7;
+
+    /// Physical paper dimensions in millimeters (width, height).
+    pub fn dimensions_mm(&self) -> (f32, f32) {
+        match self {
+            PaperSize::A6 => Self::A6_MM,
+            PaperSize::A4 => Self::A4_MM,
+            PaperSize::Letter => Self::LETTER_MM,
+        }
+    }
+
+    fn to_ps(dimensions: (f32, f32)) -> (f32, f32) {
+        (dimensions.0 * Self::MM_TO_PT, dimensions.1 * Self::MM_TO_PT)
+    }
+
+    /// Physical paper dimensions in PostScript points (width, height).
+    pub fn dimensions_pt(&self) -> (f32, f32) {
+        Self::to_ps(self.dimensions_mm())
+    }
+
+    /// Number of scorecard cards printable per sheet for this paper size.
+    pub fn cards_per_page(&self) -> usize {
+        match self {
+            PaperSize::A6 => 1,
+            PaperSize::A4 | PaperSize::Letter => 4,
+        }
+    }
+}
+
+/// Spacing parameters (margins and gaps) for a scorecard page layout.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PageSpacing {
+    pub margin_x: f32,
+    pub margin_y: f32,
+    pub gap_x: f32,
+    pub gap_y: f32,
+}
+
+impl PageSpacing {
+    /// Resolves standard margins and gaps for the specified paper size.
+    pub fn for_paper_size(paper_size: PaperSize) -> Self {
+        if paper_size.cards_per_page() == 1 {
+            Self {
+                margin_x: A6_MARGIN,
+                margin_y: A6_MARGIN,
+                gap_x: 0.0,
+                gap_y: 0.0,
+            }
+        } else {
+            Self {
+                margin_x: DEFAULT_GRID_MARGIN,
+                margin_y: DEFAULT_GRID_MARGIN,
+                gap_x: DEFAULT_GRID_GAP,
+                gap_y: DEFAULT_GRID_GAP,
+            }
+        }
+    }
+}
+
+/// Computes available width and height for each card given sheet dimensions and spacing.
+fn compute_card_dimensions(
+    page_w_pt: f32,
+    page_h_pt: f32,
+    cards_per_page: usize,
+    spacing: &PageSpacing,
+) -> (f32, f32) {
+    if cards_per_page == 1 {
+        (
+            page_w_pt - 2.0 * spacing.margin_x,
+            page_h_pt - 2.0 * spacing.margin_y,
+        )
+    } else {
+        (
+            (page_w_pt - 2.0 * spacing.margin_x - spacing.gap_x) / 2.0,
+            (page_h_pt - 2.0 * spacing.margin_y - spacing.gap_y) / 2.0,
+        )
+    }
+}
+
 /// Bounding rectangle in PDF points.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RectSpec {
@@ -109,25 +199,12 @@ pub struct PageLayout {
 impl PageLayout {
     /// Creates a PageLayout configuration from a PaperSize enum.
     pub fn new(paper_size: PaperSize) -> Self {
-        let (page_w_mm, page_h_mm, page_w_pt, page_h_pt, cards_per_page) = match paper_size {
-            PaperSize::A6 => (105.0, 148.0, 297.64, 419.53, 1),
-            PaperSize::A4 => (210.0, 297.0, 595.28, 841.89, 4),
-            PaperSize::Letter => (215.9, 279.4, 612.0, 792.0, 4),
-        };
-
-        let margin_x = 18.0;
-        let margin_y = 18.0;
-        let gap_x = 12.0;
-        let gap_y = 12.0;
-
-        let (card_w, card_h) = if cards_per_page == 1 {
-            (page_w_pt - 2.0 * A6_MARGIN, page_h_pt - 2.0 * A6_MARGIN)
-        } else {
-            (
-                (page_w_pt - 2.0 * margin_x - gap_x) / 2.0,
-                (page_h_pt - 2.0 * margin_y - gap_y) / 2.0,
-            )
-        };
+        let (page_w_mm, page_h_mm) = paper_size.dimensions_mm();
+        let (page_w_pt, page_h_pt) = paper_size.dimensions_pt();
+        let cards_per_page = paper_size.cards_per_page();
+        let spacing = PageSpacing::for_paper_size(paper_size);
+        let (card_w, card_h) =
+            compute_card_dimensions(page_w_pt, page_h_pt, cards_per_page, &spacing);
 
         Self {
             paper_size,
@@ -136,10 +213,10 @@ impl PageLayout {
             page_w_pt,
             page_h_pt,
             cards_per_page,
-            margin_x,
-            margin_y,
-            gap_x,
-            gap_y,
+            margin_x: spacing.margin_x,
+            margin_y: spacing.margin_y,
+            gap_x: spacing.gap_x,
+            gap_y: spacing.gap_y,
             card_w,
             card_h,
         }
@@ -148,31 +225,39 @@ impl PageLayout {
     /// Returns the bounding box rectangle for the card at index `idx` on the current page (0..cards_per_page).
     pub fn card_rect(&self, idx: usize) -> RectSpec {
         if self.cards_per_page == 1 {
-            RectSpec {
-                x: A6_MARGIN,
-                y: A6_MARGIN,
-                w: self.card_w,
-                h: self.card_h,
-            }
+            self.single_card_rect()
         } else {
-            // 2x2 grid positions in bottom-left PDF coordinate system:
-            // 0: Top-Left, 1: Top-Right, 2: Bottom-Left, 3: Bottom-Right
-            let (x, y) = match idx {
-                0 => (self.margin_x, self.margin_y + self.card_h + self.gap_y),
-                1 => (
-                    self.margin_x + self.card_w + self.gap_x,
-                    self.margin_y + self.card_h + self.gap_y,
-                ),
-                2 => (self.margin_x, self.margin_y),
-                _ => (self.margin_x + self.card_w + self.gap_x, self.margin_y),
-            };
+            self.grid_card_rect(idx)
+        }
+    }
 
-            RectSpec {
-                x,
-                y,
-                w: self.card_w,
-                h: self.card_h,
-            }
+    fn single_card_rect(&self) -> RectSpec {
+        RectSpec {
+            x: self.margin_x,
+            y: self.margin_y,
+            w: self.card_w,
+            h: self.card_h,
+        }
+    }
+
+    fn grid_card_rect(&self, idx: usize) -> RectSpec {
+        // 2x2 grid positions in bottom-left PDF coordinate system:
+        // 0: Top-Left, 1: Top-Right, 2: Bottom-Left, 3: Bottom-Right
+        let (x, y) = match idx {
+            0 => (self.margin_x, self.margin_y + self.card_h + self.gap_y),
+            1 => (
+                self.margin_x + self.card_w + self.gap_x,
+                self.margin_y + self.card_h + self.gap_y,
+            ),
+            2 => (self.margin_x, self.margin_y),
+            _ => (self.margin_x + self.card_w + self.gap_x, self.margin_y),
+        };
+
+        RectSpec {
+            x,
+            y,
+            w: self.card_w,
+            h: self.card_h,
         }
     }
 }

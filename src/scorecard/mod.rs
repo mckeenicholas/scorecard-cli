@@ -8,6 +8,7 @@ pub use planner::ScorecardPlanner;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::model::{PlannedRoundSummary, ScorecardPlan};
 
     #[test]
     fn test_event_name_by_id() {
@@ -113,14 +114,16 @@ mod tests {
             extensions: vec![],
         };
 
-        let targets_all = ScorecardPlanner::resolve_targets(&comp, &[]);
+        let (targets_all, _) = ScorecardPlanner::resolve_targets(&comp, &[]);
         assert_eq!(targets_all.len(), 1);
         assert_eq!(targets_all[0].event_id, "333");
 
-        let targets_explicit =
+        let (targets_explicit, notes_explicit) =
             ScorecardPlanner::resolve_targets(&comp, &["333".to_string(), "333fm".to_string()]);
         assert_eq!(targets_explicit.len(), 1);
         assert_eq!(targets_explicit[0].event_id, "333");
+        assert_eq!(notes_explicit.len(), 1);
+        assert!(notes_explicit[0].contains("333fm"));
     }
 
     #[test]
@@ -272,5 +275,33 @@ mod tests {
         assert!(blank_card.is_blank);
         assert_eq!(blank_card.competitor_name, "");
         assert_eq!(blank_card.station_number, None);
+    }
+
+    #[test]
+    fn test_scorecard_plan_summary_formatting() {
+        let plan = ScorecardPlan {
+            items: vec![],
+            summaries: vec![
+                PlannedRoundSummary::OpenRound {
+                    event_id: "333".to_string(),
+                    round_number: 1,
+                    competitor_count: 2,
+                    sample_competitor_names: vec!["Alice".to_string(), "Bob".to_string()],
+                },
+                PlannedRoundSummary::SubsequentRound {
+                    event_id: "333".to_string(),
+                    round_number: 2,
+                    blank_count: 16,
+                    reason: "top 16 ranking".to_string(),
+                },
+            ],
+            notes: vec!["Skipped '333fm'".to_string()],
+        };
+
+        let formatted = plan.format_summary();
+        assert!(formatted.contains("Note: Skipped '333fm'"));
+        assert!(formatted.contains("[333 Round 1] (Open Round)"));
+        assert!(formatted.contains("Competitors: Alice, Bob"));
+        assert!(formatted.contains("[333 Round 2] (Subsequent Round) -> Generating 16 blank scorecards"));
     }
 }
