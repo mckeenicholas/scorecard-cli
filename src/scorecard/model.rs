@@ -291,8 +291,13 @@ impl PlannedRoundSummary {
                 competitor_count,
                 sample_competitor_names,
             } => {
+                let round_type = if *round_number == 1 {
+                    "(Open Round)"
+                } else {
+                    "(Assigned Competitors)"
+                };
                 let mut s = format!(
-                    "[{event_id} Round {round_number}] (Open Round) -> Generating scorecards for {competitor_count} accepted competitors\n"
+                    "[{event_id} Round {round_number}] {round_type} -> Generating scorecards for {competitor_count} accepted competitors\n"
                 );
                 if *competitor_count <= 5 && *competitor_count > 0 {
                     s.push_str(&format!(

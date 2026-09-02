@@ -1,3 +1,4 @@
+mod interactive;
 mod options;
 mod pdf;
 mod progress;
@@ -165,21 +166,19 @@ fn validate_sharding_compatibility(
         return Ok(());
     }
 
-    // Verify that all cards belonging to the same cover sheet bundle end up in the exact same partition file
-    let has_stage = options.cover_sheet_shard.contains(&ShardBy::Stage);
-    let has_event = options.cover_sheet_shard.contains(&ShardBy::Event);
-    let has_group = options.cover_sheet_shard.contains(&ShardBy::Group);
-
     let mut bundle_partition_map: std::collections::HashMap<BundlePartitionKey<'_>, &str> =
         std::collections::HashMap::new();
 
     for (filename, partition_cards) in partitions {
         for card in partition_cards {
+            if card.is_cover_sheet {
+                continue;
+            }
             let bundle_key = (
-                if has_stage { card.stage_name } else { None },
-                if has_event { Some(card.event_id) } else { None },
-                if has_event { card.round_number } else { 0 },
-                if has_group { card.group_number } else { 0 },
+                card.stage_name,
+                Some(card.event_id),
+                card.round_number,
+                card.group_number,
             );
             if let Some(existing_file) = bundle_partition_map.get(&bundle_key) {
                 if *existing_file != filename.as_str() {
@@ -236,14 +235,26 @@ fn generate_partitioned_pdfs(
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
-    let comp = load_competition(&cli.comp_source)?;
+    let (cli, comp) = if std::env::args().len() <= 1 {
+        interactive::prompt_interactive_flow()?
+    } else {
+        let parsed = Cli::parse();
+        if parsed.comp_source.is_none() {
+            interactive::prompt_interactive_flow()?
+        } else {
+            let comp_source = parsed.comp_source.as_deref().unwrap();
+            let comp = load_competition(comp_source)?;
+            (parsed, comp)
+        }
+    };
+
     let active_opts = resolve_options(&cli, &comp);
     let plan = ScorecardPlanner::plan(
         &comp,
         &cli.events,
         active_opts.cover_sheets,
-        &active_opts.cover_sheet_shard,
+        &active_opts.cover_sheets_by,
+        active_opts.print_stations,
     )?;
 
     if plan.is_empty() {
@@ -429,6 +440,7 @@ mod tests {
 
     #[test]
     fn test_validate_sharding_compatibility() {
+        use options::CoverSheetBy;
         let card1 = ScorecardItem {
             scorecard_number: 1,
             station_number: Some(1),
@@ -450,7 +462,7 @@ mod tests {
 
         let opts_cover_on = ResolvedOptions {
             cover_sheets: true,
-            cover_sheet_shard: vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group],
+            cover_sheets_by: vec![CoverSheetBy::Stage],
             ..Default::default()
         };
         let opts_cover_off = ResolvedOptions {
@@ -470,10 +482,10 @@ mod tests {
         assert!(validate_sharding_compatibility(&partitions_split, &opts_cover_on).is_err());
         assert!(validate_sharding_compatibility(&partitions_split, &opts_cover_off).is_ok());
 
-        // Config compatibility: file shard more specific than cover sheet shard
+        // Config compatibility: file shard more specific than cover sheet criteria
         let opts_incompatible = ResolvedOptions {
             cover_sheets: true,
-            cover_sheet_shard: vec![ShardBy::Event],
+            cover_sheets_by: vec![CoverSheetBy::Round],
             shard: vec![ShardBy::Stage],
             ..Default::default()
         };

@@ -41,8 +41,77 @@ impl std::str::FromStr for ShardBy {
     }
 }
 
+/// Criteria for adding cover sheets.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, ValueEnum, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum CoverSheetBy {
+    #[value(
+        name = "round",
+        alias = "rounds",
+        alias = "r",
+        alias = "event",
+        alias = "events",
+        alias = "e"
+    )]
+    Round,
+    #[value(name = "group", alias = "groups", alias = "g")]
+    Group,
+    #[value(
+        name = "stage",
+        alias = "stages",
+        alias = "room",
+        alias = "rooms",
+        alias = "s"
+    )]
+    Stage,
+    #[value(name = "none", alias = "false", alias = "off")]
+    None,
+}
+
+impl CoverSheetBy {
+    /// Returns the hierarchy tier of the cover sheet criterion (1 is highest tier).
+    pub fn tier(&self) -> u8 {
+        match self {
+            CoverSheetBy::Round => 1,
+            CoverSheetBy::Group => 2,
+            CoverSheetBy::Stage => 3,
+            CoverSheetBy::None => 255,
+        }
+    }
+}
+
+impl std::fmt::Display for CoverSheetBy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CoverSheetBy::Round => write!(f, "round"),
+            CoverSheetBy::Group => write!(f, "group"),
+            CoverSheetBy::Stage => write!(f, "stage"),
+            CoverSheetBy::None => write!(f, "none"),
+        }
+    }
+}
+
+impl std::str::FromStr for CoverSheetBy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "round" | "rounds" | "r" | "event" | "events" | "e" => Ok(CoverSheetBy::Round),
+            "group" | "groups" | "g" => Ok(CoverSheetBy::Group),
+            "stage" | "stages" | "room" | "rooms" | "s" => Ok(CoverSheetBy::Stage),
+            "none" | "false" | "off" => Ok(CoverSheetBy::None),
+            other => Err(format!(
+                "invalid cover sheet criterion '{}': must be 'round' ('r'), 'group' ('g'), or 'stage' ('s')",
+                other
+            )),
+        }
+    }
+}
+
 /// Fast WCA Cubing Competition Scorecard Generator in Rust
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug, Clone, Default)]
 #[command(
     name = "scorecard-gen",
     about = "Fast cubing competition scorecard generator in Rust",
@@ -51,7 +120,7 @@ impl std::str::FromStr for ShardBy {
 pub struct Cli {
     /// Competition name/ID or WCIF file path
     #[arg(value_name = "COMPETITION")]
-    pub comp_source: String,
+    pub comp_source: Option<String>,
 
     /// Events and rounds (e.g. 333, 333-2, 333-r2)
     #[arg(value_name = "EVENTS")]
@@ -86,27 +155,18 @@ pub struct Cli {
     #[arg(short = 'a', long)]
     pub ascii: bool,
 
-    /// Include/exclude cover sheets
+    /// Include cover sheets. Optionally specify criteria: r (round), g (group), s (stage). Defaults to stage (s).
     #[arg(
         short = 'c',
-        long,
+        long = "cover-sheets",
         visible_alias = "print-scorecards-cover-sheets",
-        num_args = 0..=1,
-        default_missing_value = "true",
-        value_name = "BOOL"
-    )]
-    pub cover_sheets: Option<bool>,
-
-    /// Set cover sheet bundling criteria (stage, event, group)
-    #[arg(
-        long = "cover-sheet-shard",
-        visible_alias = "cover-sheets-shard",
         value_enum,
-        value_name = "SHARD",
         value_delimiter = ',',
-        num_args = 1..
+        num_args = 0..,
+        default_missing_value = "stage",
+        value_name = "CRITERIA"
     )]
-    pub cover_sheet_shard: Option<Vec<ShardBy>>,
+    pub cover_sheets: Option<Vec<CoverSheetBy>>,
 
     /// Display local names first
     #[arg(
@@ -176,7 +236,7 @@ pub struct ResolvedOptions {
     pub format: PageFormat,
     pub ascii: bool,
     pub cover_sheets: bool,
-    pub cover_sheet_shard: Vec<ShardBy>,
+    pub cover_sheets_by: Vec<CoverSheetBy>,
     pub shard: Vec<ShardBy>,
     pub local_names_first: bool,             // TODO: wire to renderer
     pub print_one_name: bool,                // TODO: wire to renderer
@@ -193,7 +253,7 @@ impl Default for ResolvedOptions {
             format: PageFormat::Group,
             ascii: false,
             cover_sheets: false,
-            cover_sheet_shard: Vec::new(),
+            cover_sheets_by: Vec::new(),
             shard: Vec::new(),
             local_names_first: false,
             print_one_name: false,
@@ -228,7 +288,14 @@ impl ResolvedOptions {
         {
             self.format = PageFormat::Stacked;
         }
-        Self::apply_optional(&mut self.cover_sheets, cfg.print_scorecards_cover_sheets);
+        if let Some(print_cover) = cfg.print_scorecards_cover_sheets {
+            self.cover_sheets = print_cover;
+            if print_cover && self.cover_sheets_by.is_empty() {
+                self.cover_sheets_by = vec![CoverSheetBy::Stage];
+            } else if !print_cover {
+                self.cover_sheets_by.clear();
+            }
+        }
         Self::apply_optional(&mut self.local_names_first, cfg.local_names_first);
         Self::apply_optional(&mut self.print_one_name, cfg.print_one_name);
         Self::apply_optional(&mut self.print_stations, cfg.print_stations);
@@ -251,17 +318,23 @@ impl ResolvedOptions {
         Self::apply_optional(&mut self.paper, cli.paper);
         Self::apply_optional(&mut self.format, cli.format);
         self.ascii = cli.ascii;
-        Self::apply_optional(&mut self.cover_sheets, cli.cover_sheets);
 
-        if self.cover_sheets {
-            if let Some(ref css) = cli.cover_sheet_shard {
-                self.cover_sheet_shard = css.clone();
-                Self::normalize_shard_list(&mut self.cover_sheet_shard);
-            } else if self.cover_sheet_shard.is_empty() {
-                self.cover_sheet_shard = vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group];
+        if let Some(ref cs_list) = cli.cover_sheets {
+            if cs_list.contains(&CoverSheetBy::None) {
+                self.cover_sheets = false;
+                self.cover_sheets_by.clear();
+            } else {
+                self.cover_sheets = true;
+                let mut list = cs_list.clone();
+                Self::normalize_cover_sheet_list(&mut list);
+                if list.is_empty() {
+                    self.cover_sheets_by = vec![CoverSheetBy::Stage];
+                } else {
+                    self.cover_sheets_by = list;
+                }
             }
-        } else {
-            self.cover_sheet_shard.clear();
+        } else if self.cover_sheets && self.cover_sheets_by.is_empty() {
+            self.cover_sheets_by = vec![CoverSheetBy::Stage];
         }
 
         if let Some(ref s) = cli.shard {
@@ -283,33 +356,36 @@ impl ResolvedOptions {
         Self::apply_optional(&mut self.scramble_checker_blank, cli.scramble_checker_blank);
     }
 
+    fn normalize_cover_sheet_list(list: &mut Vec<CoverSheetBy>) {
+        list.retain(|c| *c != CoverSheetBy::None);
+        list.sort_by_key(|c| c.tier());
+        list.dedup();
+    }
+
     fn normalize_shard_list(list: &mut Vec<ShardBy>) {
         list.sort_by_key(|s| *s as u8);
         list.dedup();
     }
 
-    /// Validates that PDF file sharding is not more specific than cover sheet sharding.
+    /// Validates that PDF file sharding is not more specific than cover sheet criteria.
     pub fn validate_compatibility(&self) -> Result<(), String> {
         if !self.cover_sheets || self.shard.is_empty() {
             return Ok(());
         }
 
-        for file_dim in &self.shard {
-            if !self.cover_sheet_shard.contains(file_dim) {
-                let cs_str = if self.cover_sheet_shard.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    self.cover_sheet_shard
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                return Err(format!(
-                    "Incompatible sharding: PDF file sharding by '{}' is more specific than cover sheet sharding (sharded by: {}). A set covered by one cover sheet cannot be split across multiple PDF files.",
-                    file_dim, cs_str
-                ));
+        if self.cover_sheets_by.contains(&CoverSheetBy::Round) {
+            if self.shard.contains(&ShardBy::Stage) {
+                return Err("Incompatible sharding: PDF file sharding by 'stage' is more specific than 'round' cover sheet. A round cover sheet cannot be placed in a single stage PDF file.".to_string());
             }
+            if self.shard.contains(&ShardBy::Group) {
+                return Err("Incompatible sharding: PDF file sharding by 'group' is more specific than 'round' cover sheet. A round cover sheet cannot be placed in a single group PDF file.".to_string());
+            }
+        }
+
+        if self.cover_sheets_by.contains(&CoverSheetBy::Group)
+            && self.shard.contains(&ShardBy::Stage)
+        {
+            return Err("Incompatible sharding: PDF file sharding by 'stage' is more specific than 'group' cover sheet. A group cover sheet covers the entire group across stages.".to_string());
         }
 
         Ok(())
@@ -329,15 +405,11 @@ impl ResolvedOptions {
         out.push_str(&format!("Format:                      {}\n", self.format));
         out.push_str(&format!("ASCII Only:                  {}\n", self.ascii));
         if self.cover_sheets {
-            let cs_strs: Vec<String> = self
-                .cover_sheet_shard
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+            let cs_strs: Vec<String> = self.cover_sheets_by.iter().map(|s| s.to_string()).collect();
             out.push_str(&format!(
-                "Cover Sheets:                true (bundled by: {})\n",
+                "Cover Sheets:                true (by: {})\n",
                 if cs_strs.is_empty() {
-                    "(all)".to_string()
+                    "(none)".to_string()
                 } else {
                     cs_strs.join(", ")
                 }
@@ -396,7 +468,7 @@ mod tests {
     fn test_cli_parsing_basic() {
         let args = vec!["scorecard-gen", "Comp2026", "333", "333-2"];
         let cli = Cli::try_parse_from(args).unwrap();
-        assert_eq!(cli.comp_source, "Comp2026");
+        assert_eq!(cli.comp_source, Some("Comp2026".to_string()));
         assert_eq!(cli.events, vec!["333", "333-2"]);
     }
 
@@ -421,7 +493,7 @@ mod tests {
         assert_eq!(cli.format, Some(PageFormat::Group));
         assert!(cli.ascii);
         assert_eq!(cli.print_stations, Some(true));
-        assert_eq!(cli.cover_sheets, Some(false));
+        assert_eq!(cli.cover_sheets, Some(vec![CoverSheetBy::None]));
         assert_eq!(cli.shard, Some(vec![ShardBy::Event, ShardBy::Group]));
     }
 
@@ -476,57 +548,77 @@ mod tests {
 
     #[test]
     fn test_cover_sheets_sharding_behavior() {
-        // When cover sheets are enabled without explicit sharding, shard remains empty (single PDF)
-        // and cover_sheet_shard defaults to Stage, Event, Group
+        // When cover sheets are enabled without explicit args (-c), defaults to Stage
         let cli_cover = Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c"]).unwrap();
         let resolved = ResolvedOptions::resolve(&cli_cover, None);
         assert!(resolved.cover_sheets);
         assert!(resolved.shard.is_empty());
-        assert_eq!(
-            resolved.cover_sheet_shard,
-            vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group]
-        );
+        assert_eq!(resolved.cover_sheets_by, vec![CoverSheetBy::Stage]);
         assert!(resolved.validate_compatibility().is_ok());
 
-        // When cover sheets are enabled with explicit file sharding (e.g. stage), it's compatible
+        // When -c is given explicit args r, g, s in any order, it sorts highest tier first (Round -> Group -> Stage)
+        let cli_all =
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "s,g,r"]).unwrap();
+        let resolved_all = ResolvedOptions::resolve(&cli_all, None);
+        assert!(resolved_all.cover_sheets);
+        assert_eq!(
+            resolved_all.cover_sheets_by,
+            vec![
+                CoverSheetBy::Round,
+                CoverSheetBy::Group,
+                CoverSheetBy::Stage
+            ]
+        );
+
+        // When cover sheets are enabled with stage, and file shard is stage: compatible
         let cli_override =
-            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "-s", "stage"]).unwrap();
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "s", "-s", "stage"])
+                .unwrap();
         let resolved_override = ResolvedOptions::resolve(&cli_override, None);
         assert!(resolved_override.cover_sheets);
         assert_eq!(resolved_override.shard, vec![ShardBy::Stage]);
-        assert_eq!(
-            resolved_override.cover_sheet_shard,
-            vec![ShardBy::Stage, ShardBy::Event, ShardBy::Group]
-        );
+        assert_eq!(resolved_override.cover_sheets_by, vec![CoverSheetBy::Stage]);
         assert!(resolved_override.validate_compatibility().is_ok());
 
-        // When custom cover_sheet_shard is given (e.g. event only) and file shard is stage: incompatible!
-        let cli_incompatible = Cli::try_parse_from(vec![
-            "scorecard-gen",
-            "Comp2026",
-            "-c",
-            "--cover-sheet-shard",
-            "event",
-            "-s",
-            "stage",
-        ])
-        .unwrap();
+        // When round cover sheet is given and file shard is stage: incompatible!
+        let cli_incompatible =
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "r", "-s", "stage"])
+                .unwrap();
         let resolved_incompatible = ResolvedOptions::resolve(&cli_incompatible, None);
         assert!(resolved_incompatible.validate_compatibility().is_err());
 
-        // When custom cover_sheet_shard is given (e.g. stage,event) and file shard is stage: compatible!
-        let cli_custom_ok = Cli::try_parse_from(vec![
-            "scorecard-gen",
-            "Comp2026",
-            "-c",
-            "--cover-sheet-shard",
-            "stage,event",
-            "-s",
-            "stage",
-        ])
-        .unwrap();
+        // When stage cover sheet is given and file shard is stage: compatible!
+        let cli_custom_ok =
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "s", "-s", "stage"])
+                .unwrap();
         let resolved_custom_ok = ResolvedOptions::resolve(&cli_custom_ok, None);
         assert!(resolved_custom_ok.validate_compatibility().is_ok());
+
+        // When explicitly disabled with false
+        let cli_disabled =
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-c", "false"]).unwrap();
+        let resolved_disabled = ResolvedOptions::resolve(&cli_disabled, None);
+        assert!(!resolved_disabled.cover_sheets);
+        assert!(resolved_disabled.cover_sheets_by.is_empty());
+    }
+
+    #[test]
+    fn test_cover_sheet_by_display_and_parsing() {
+        assert_eq!("round".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Round));
+        assert_eq!("r".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Round));
+        assert_eq!("event".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Round));
+        assert_eq!("e".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Round));
+        assert_eq!("group".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Group));
+        assert_eq!("g".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Group));
+        assert_eq!("stage".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Stage));
+        assert_eq!("s".parse::<CoverSheetBy>(), Ok(CoverSheetBy::Stage));
+        assert_eq!("none".parse::<CoverSheetBy>(), Ok(CoverSheetBy::None));
+        assert_eq!("false".parse::<CoverSheetBy>(), Ok(CoverSheetBy::None));
+        assert!("invalid".parse::<CoverSheetBy>().is_err());
+
+        assert_eq!(CoverSheetBy::Round.to_string(), "round");
+        assert_eq!(CoverSheetBy::Group.to_string(), "group");
+        assert_eq!(CoverSheetBy::Stage.to_string(), "stage");
     }
 
     #[test]

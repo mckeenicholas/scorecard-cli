@@ -180,6 +180,197 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
+        use crate::wcif::model::{
+            Activity, Assignment, Competition, Event, Person, Registration, Room, Round, Schedule,
+            Venue,
+        };
+
+        let comp = Competition {
+            format_version: Some("1.0".to_string()),
+            id: "CompWithR2".to_string(),
+            name: "Comp With Round 2".to_string(),
+            short_name: None,
+            persons: vec![
+                Person {
+                    registrant_id: Some(1),
+                    name: "Alice Smith".to_string(),
+                    wca_id: Some("2022SMIT01".to_string()),
+                    country_iso2: Some("US".to_string()),
+                    gender: Some("f".to_string()),
+                    registration: Some(Registration {
+                        id: Some(1),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string(), "222".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![
+                        Assignment {
+                            activity_id: 101, // 333-r1-g1
+                            station_number: Some(1),
+                            assignment_code: Some("competitor".to_string()),
+                        },
+                        Assignment {
+                            activity_id: 102, // 333-r2-g1 (Alice advanced to R2!)
+                            station_number: Some(5),
+                            assignment_code: Some("competitor".to_string()),
+                        },
+                        Assignment {
+                            activity_id: 201, // 222-r1-g1
+                            station_number: Some(2),
+                            assignment_code: Some("competitor".to_string()),
+                        },
+                    ],
+                    personal_bests: vec![],
+                },
+                Person {
+                    registrant_id: Some(2),
+                    name: "Bob Jones".to_string(),
+                    wca_id: Some("2021JONE01".to_string()),
+                    country_iso2: Some("US".to_string()),
+                    gender: Some("m".to_string()),
+                    registration: Some(Registration {
+                        id: Some(2),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![
+                        Assignment {
+                            activity_id: 101, // 333-r1-g1
+                            station_number: Some(2),
+                            assignment_code: Some("competitor".to_string()),
+                        },
+                        // Bob did not advance to 333-r2!
+                    ],
+                    personal_bests: vec![],
+                },
+            ],
+            events: vec![
+                Event {
+                    id: "333".to_string(),
+                    rounds: vec![
+                        Round {
+                            id: "333-r1".to_string(),
+                            format: Some("a".to_string()),
+                            time_limit: None,
+                            cutoff: None,
+                            advancement_condition: None,
+                            scramble_group_count: 1,
+                        },
+                        Round {
+                            id: "333-r2".to_string(),
+                            format: Some("a".to_string()),
+                            time_limit: None,
+                            cutoff: None,
+                            advancement_condition: None,
+                            scramble_group_count: 1,
+                        },
+                    ],
+                    competitor_limit: None,
+                    qualification: None,
+                },
+                Event {
+                    id: "222".to_string(),
+                    rounds: vec![
+                        Round {
+                            id: "222-r1".to_string(),
+                            format: Some("a".to_string()),
+                            time_limit: None,
+                            cutoff: None,
+                            advancement_condition: None,
+                            scramble_group_count: 1,
+                        },
+                        Round {
+                            id: "222-r2".to_string(),
+                            format: Some("a".to_string()),
+                            time_limit: None,
+                            cutoff: None,
+                            advancement_condition: None,
+                            scramble_group_count: 1,
+                        },
+                    ],
+                    competitor_limit: None,
+                    qualification: None,
+                },
+            ],
+            schedule: Some(Schedule {
+                start_date: None,
+                number_of_days: None,
+                venues: vec![Venue {
+                    id: Some(1),
+                    name: Some("Main Venue".to_string()),
+                    rooms: vec![Room {
+                        id: Some(1),
+                        name: Some("Main Stage".to_string()),
+                        color: None,
+                        activities: vec![
+                            Activity {
+                                id: 101,
+                                name: "3x3x3 Round 1 Group 1".to_string(),
+                                activity_code: "333-r1-g1".to_string(),
+                                start_time: None,
+                                end_time: None,
+                                child_activities: vec![],
+                                scramble_set_id: None,
+                            },
+                            Activity {
+                                id: 102,
+                                name: "3x3x3 Round 2 Group 1".to_string(),
+                                activity_code: "333-r2-g1".to_string(),
+                                start_time: None,
+                                end_time: None,
+                                child_activities: vec![],
+                                scramble_set_id: None,
+                            },
+                            Activity {
+                                id: 201,
+                                name: "2x2x2 Round 1 Group 1".to_string(),
+                                activity_code: "222-r1-g1".to_string(),
+                                start_time: None,
+                                end_time: None,
+                                child_activities: vec![],
+                                scramble_set_id: None,
+                            },
+                        ],
+                    }],
+                }],
+            }),
+            extensions: vec![],
+        };
+
+        // 1. When requested_events is empty, it includes:
+        // - 333-r1 (Round 1)
+        // - 333-r2 (Round 2 with competitor assignments)
+        // - 222-r1 (Round 1)
+        // (222-r2 is omitted because it has no competitor assignments)
+        let (targets_all, _) = ScorecardPlanner::resolve_targets(&comp, &[]);
+        assert_eq!(targets_all.len(), 3);
+        assert_eq!(targets_all[0].round_id, "333-r1");
+        assert_eq!(targets_all[1].round_id, "333-r2");
+        assert_eq!(targets_all[2].round_id, "222-r1");
+
+        // 2. Planning 333-r2 produces a NAMED scorecard for Alice (and NOT Bob):
+        let plan_r2 =
+            ScorecardPlanner::plan(&comp, &["333-r2".to_string()], false, &[], true).unwrap();
+        assert_eq!(plan_r2.len(), 1);
+        let alice_r2 = &plan_r2[0];
+        assert_eq!(alice_r2.competitor_name, "Alice Smith");
+        assert_eq!(alice_r2.round_number, 2);
+        assert_eq!(alice_r2.station_number, Some(5));
+
+        // 3. Planning 222-r2 explicitly (no assignments) produces blank scorecards:
+        let plan_222_r2 =
+            ScorecardPlanner::plan(&comp, &["222-r2".to_string()], false, &[], true).unwrap();
+        assert!(plan_222_r2.len() > 0);
+        assert!(plan_222_r2[0].is_blank);
+    }
+
+    #[test]
     fn test_scorecard_planner_full_pipeline() {
         use crate::wcif::{
             Competition, Cutoff, Event, Round, TimeLimit,
@@ -303,7 +494,8 @@ mod tests {
         };
 
         // Plan Round 1
-        let cards_r1 = ScorecardPlanner::plan(&comp, &["333-r1".to_string()], false, &[]).unwrap();
+        let cards_r1 =
+            ScorecardPlanner::plan(&comp, &["333-r1".to_string()], false, &[], true).unwrap();
         assert_eq!(cards_r1.len(), 1);
         let card1 = &cards_r1[0];
         assert_eq!(card1.scorecard_number, 1);
@@ -327,7 +519,8 @@ mod tests {
         );
 
         // Plan Round 2 (advancement blanks)
-        let cards_r2 = ScorecardPlanner::plan(&comp, &["333-r2".to_string()], false, &[]).unwrap();
+        let cards_r2 =
+            ScorecardPlanner::plan(&comp, &["333-r2".to_string()], false, &[], true).unwrap();
         assert_eq!(cards_r2.len(), 1);
         let blank_card = &cards_r2[0];
         assert_eq!(blank_card.scorecard_number, 1);
@@ -339,7 +532,7 @@ mod tests {
 
     #[test]
     fn test_planner_with_cover_sheets() {
-        use crate::options::ShardBy;
+        use crate::options::CoverSheetBy;
         use crate::wcif::model::{
             Activity, Assignment, Competition, Event, Person, Registration, Room, Round, Schedule,
             Venue,
@@ -440,47 +633,320 @@ mod tests {
             extensions: vec![],
         };
 
-        // When cover sheets are enabled with Stage, Event, Group bundling:
-        let plan = ScorecardPlanner::plan(
+        // 1. When all three criteria are enabled (Stage, Group, Round):
+        // Additive cover sheets: Round (highest tier) -> Group -> Stage -> cards
+        let plan_all = ScorecardPlanner::plan(
             &comp,
             &["333-r1".to_string()],
             true,
-            &[ShardBy::Stage, ShardBy::Event, ShardBy::Group],
+            &[
+                CoverSheetBy::Stage,
+                CoverSheetBy::Group,
+                CoverSheetBy::Round,
+            ],
+            true,
         )
         .unwrap();
-        // 1 cover sheet + 2 competitor cards = 3 items
-        assert_eq!(plan.len(), 3);
+        // 3 cover sheets (Round, Group, Stage) + 2 competitor cards = 5 items
+        assert_eq!(plan_all.len(), 5);
 
-        // Item 0 is the cover sheet
-        let cover = &plan[0];
-        assert!(cover.is_cover_sheet);
-        assert_eq!(cover.scorecard_number, 0);
-        assert_eq!(cover.total_group_cards, 2);
-        assert_eq!(cover.group_number, 1);
-        assert_eq!(cover.stage_name, Some("Main Hall"));
-        assert_eq!(cover.event_name, "3x3x3 Cube");
+        // Item 0 is Tier 1 (Round cover sheet)
+        let cover_round = &plan_all[0];
+        assert!(cover_round.is_cover_sheet);
+        assert_eq!(cover_round.scorecard_number, 0);
+        assert_eq!(cover_round.group_number, 0);
+        assert_eq!(cover_round.stage_name, None);
+        assert_eq!(cover_round.total_group_cards, 2);
 
-        // Item 1 and Item 2 are competitor cards
-        let card1 = &plan[1];
+        // Item 1 is Tier 2 (Group cover sheet)
+        let cover_group = &plan_all[1];
+        assert!(cover_group.is_cover_sheet);
+        assert_eq!(cover_group.scorecard_number, 0);
+        assert_eq!(cover_group.group_number, 1);
+        assert_eq!(cover_group.stage_name, None);
+        assert_eq!(cover_group.total_group_cards, 2);
+
+        // Item 2 is Tier 3 (Stage cover sheet: per group on each stage)
+        let cover_stage = &plan_all[2];
+        assert!(cover_stage.is_cover_sheet);
+        assert_eq!(cover_stage.scorecard_number, 0);
+        assert_eq!(cover_stage.group_number, 1);
+        assert_eq!(cover_stage.stage_name, Some("Main Hall"));
+        assert_eq!(cover_stage.total_group_cards, 2);
+
+        // Item 3 and Item 4 are competitor cards
+        let card1 = &plan_all[3];
         assert!(!card1.is_cover_sheet);
         assert_eq!(card1.scorecard_number, 1);
         assert_eq!(card1.competitor_name, "Alice Smith");
 
-        let card2 = &plan[2];
+        let card2 = &plan_all[4];
         assert!(!card2.is_cover_sheet);
         assert_eq!(card2.scorecard_number, 2);
         assert_eq!(card2.competitor_name, "Bob Jones");
 
-        // When cover sheets are bundled by Event only (no stage, no group):
-        let plan_event =
-            ScorecardPlanner::plan(&comp, &["333-r1".to_string()], true, &[ShardBy::Event])
-                .unwrap();
-        assert_eq!(plan_event.len(), 3);
-        let cover_event = &plan_event[0];
-        assert!(cover_event.is_cover_sheet);
-        assert_eq!(cover_event.group_number, 0);
-        assert_eq!(cover_event.stage_name, None);
-        assert_eq!(cover_event.total_group_cards, 2);
+        // 2. When only Stage is enabled (default -c):
+        let plan_stage = ScorecardPlanner::plan(
+            &comp,
+            &["333-r1".to_string()],
+            true,
+            &[CoverSheetBy::Stage],
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan_stage.len(), 3);
+        assert!(plan_stage[0].is_cover_sheet);
+        assert_eq!(plan_stage[0].group_number, 1);
+        assert_eq!(plan_stage[0].stage_name, Some("Main Hall"));
+
+        // 3. When only Group is enabled (-c g):
+        let plan_g = ScorecardPlanner::plan(
+            &comp,
+            &["333-r1".to_string()],
+            true,
+            &[CoverSheetBy::Group],
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan_g.len(), 3);
+        assert!(plan_g[0].is_cover_sheet);
+        assert_eq!(plan_g[0].group_number, 1);
+        assert_eq!(plan_g[0].stage_name, None);
+
+        // 4. When only Round is enabled (-c r):
+        let plan_r = ScorecardPlanner::plan(
+            &comp,
+            &["333-r1".to_string()],
+            true,
+            &[CoverSheetBy::Round],
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan_r.len(), 3);
+        assert!(plan_r[0].is_cover_sheet);
+        assert_eq!(plan_r[0].group_number, 0);
+        assert_eq!(plan_r[0].stage_name, None);
+    }
+
+    #[test]
+    fn test_planner_additive_multi_stage_multi_group() {
+        use crate::options::CoverSheetBy;
+        use crate::wcif::model::{
+            Activity, Assignment, Competition, Event, Person, Registration, Room, Round, Schedule,
+            Venue,
+        };
+
+        let comp = Competition {
+            format_version: Some("1.0".to_string()),
+            id: "MultiStageComp2026".to_string(),
+            name: "Multi Stage Comp 2026".to_string(),
+            short_name: None,
+            persons: vec![
+                Person {
+                    registrant_id: Some(1),
+                    name: "Alice Smith".to_string(),
+                    wca_id: Some("2022SMIT01".to_string()),
+                    country_iso2: Some("US".to_string()),
+                    gender: Some("f".to_string()),
+                    registration: Some(Registration {
+                        id: Some(1),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![Assignment {
+                        activity_id: 101, // G1 on Blue Stage
+                        station_number: Some(1),
+                        assignment_code: Some("competitor".to_string()),
+                    }],
+                    personal_bests: vec![],
+                },
+                Person {
+                    registrant_id: Some(2),
+                    name: "Bob Jones".to_string(),
+                    wca_id: Some("2021JONE01".to_string()),
+                    country_iso2: Some("US".to_string()),
+                    gender: Some("m".to_string()),
+                    registration: Some(Registration {
+                        id: Some(2),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![Assignment {
+                        activity_id: 102, // G1 on Red Stage
+                        station_number: Some(1),
+                        assignment_code: Some("competitor".to_string()),
+                    }],
+                    personal_bests: vec![],
+                },
+                Person {
+                    registrant_id: Some(3),
+                    name: "Charlie Brown".to_string(),
+                    wca_id: Some("2020BROW01".to_string()),
+                    country_iso2: Some("US".to_string()),
+                    gender: Some("m".to_string()),
+                    registration: Some(Registration {
+                        id: Some(3),
+                        status: Some("accepted".to_string()),
+                        event_ids: vec!["333".to_string()],
+                        is_competing: true,
+                    }),
+                    avatar: None,
+                    roles: None,
+                    assignments: vec![Assignment {
+                        activity_id: 103, // G2 on Red Stage
+                        station_number: Some(1),
+                        assignment_code: Some("competitor".to_string()),
+                    }],
+                    personal_bests: vec![],
+                },
+            ],
+            events: vec![Event {
+                id: "333".to_string(),
+                rounds: vec![Round {
+                    id: "333-r1".to_string(),
+                    format: Some("a".to_string()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 2,
+                }],
+                competitor_limit: None,
+                qualification: None,
+            }],
+            schedule: Some(Schedule {
+                start_date: None,
+                number_of_days: None,
+                venues: vec![Venue {
+                    id: Some(1),
+                    name: Some("Venue".to_string()),
+                    rooms: vec![
+                        Room {
+                            id: Some(1),
+                            name: Some("Blue Stage".to_string()),
+                            color: None,
+                            activities: vec![Activity {
+                                id: 101,
+                                name: "3x3x3 Round 1 Group 1".to_string(),
+                                activity_code: "333-r1-g1".to_string(),
+                                start_time: None,
+                                end_time: None,
+                                child_activities: vec![],
+                                scramble_set_id: None,
+                            }],
+                        },
+                        Room {
+                            id: Some(2),
+                            name: Some("Red Stage".to_string()),
+                            color: None,
+                            activities: vec![
+                                Activity {
+                                    id: 102,
+                                    name: "3x3x3 Round 1 Group 1".to_string(),
+                                    activity_code: "333-r1-g1".to_string(),
+                                    start_time: None,
+                                    end_time: None,
+                                    child_activities: vec![],
+                                    scramble_set_id: None,
+                                },
+                                Activity {
+                                    id: 103,
+                                    name: "3x3x3 Round 1 Group 2".to_string(),
+                                    activity_code: "333-r1-g2".to_string(),
+                                    start_time: None,
+                                    end_time: None,
+                                    child_activities: vec![],
+                                    scramble_set_id: None,
+                                },
+                            ],
+                        },
+                    ],
+                }],
+            }),
+            extensions: vec![],
+        };
+
+        // Plan with all three criteria enabled (in reverse tier order to test sorting)
+        let plan = ScorecardPlanner::plan(
+            &comp,
+            &["333-r1".to_string()],
+            true,
+            &[
+                CoverSheetBy::Stage,
+                CoverSheetBy::Group,
+                CoverSheetBy::Round,
+            ],
+            true,
+        )
+        .unwrap();
+
+        // Total 9 items:
+        // 0: Round cover sheet (3 total)
+        // 1: Group 1 cover sheet (2 total)
+        // 2: Group 1 (Blue Stage) cover sheet (1 card)
+        // 3: Alice card
+        // 4: Group 1 (Red Stage) cover sheet (1 card)
+        // 5: Bob card
+        // 6: Group 2 cover sheet (1 total)
+        // 7: Group 2 (Red Stage) cover sheet (1 card)
+        // 8: Charlie card
+        assert_eq!(plan.len(), 9);
+
+        // 0: Event cover sheet
+        assert!(plan[0].is_cover_sheet);
+        assert_eq!(plan[0].group_number, 0);
+        assert_eq!(plan[0].stage_name, None);
+        assert_eq!(plan[0].total_group_cards, 3);
+
+        // 1: Group 1 cover sheet
+        assert!(plan[1].is_cover_sheet);
+        assert_eq!(plan[1].group_number, 1);
+        assert_eq!(plan[1].stage_name, None);
+        assert_eq!(plan[1].total_group_cards, 2);
+
+        // 2: Group 1 Blue Stage cover sheet
+        assert!(plan[2].is_cover_sheet);
+        assert_eq!(plan[2].group_number, 1);
+        assert_eq!(plan[2].stage_name, Some("Blue Stage"));
+        assert_eq!(plan[2].total_group_cards, 1);
+
+        // 3: Alice card
+        assert!(!plan[3].is_cover_sheet);
+        assert_eq!(plan[3].competitor_name, "Alice Smith");
+        assert_eq!(plan[3].scorecard_number, 1);
+
+        // 4: Group 1 Red Stage cover sheet
+        assert!(plan[4].is_cover_sheet);
+        assert_eq!(plan[4].group_number, 1);
+        assert_eq!(plan[4].stage_name, Some("Red Stage"));
+        assert_eq!(plan[4].total_group_cards, 1);
+
+        // 5: Bob card
+        assert!(!plan[5].is_cover_sheet);
+        assert_eq!(plan[5].competitor_name, "Bob Jones");
+        assert_eq!(plan[5].scorecard_number, 2);
+
+        // 6: Group 2 cover sheet
+        assert!(plan[6].is_cover_sheet);
+        assert_eq!(plan[6].group_number, 2);
+        assert_eq!(plan[6].stage_name, None);
+        assert_eq!(plan[6].total_group_cards, 1);
+
+        // 7: Group 2 Red Stage cover sheet
+        assert!(plan[7].is_cover_sheet);
+        assert_eq!(plan[7].group_number, 2);
+        assert_eq!(plan[7].stage_name, Some("Red Stage"));
+        assert_eq!(plan[7].total_group_cards, 1);
+
+        // 8: Charlie card
+        assert!(!plan[8].is_cover_sheet);
+        assert_eq!(plan[8].competitor_name, "Charlie Brown");
+        assert_eq!(plan[8].scorecard_number, 3);
     }
 
     #[test]

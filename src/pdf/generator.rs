@@ -69,9 +69,7 @@ impl PdfGenerator {
                     if card_idx < total_cards {
                         let card = &cards[card_idx];
                         let rect = layout.card_rect(slot);
-                        ScorecardRenderer::draw_card(
-                            &mut ops, card, rect.x, rect.y, rect.w, rect.h,
-                        );
+                        ScorecardRenderer::draw_card_rect(&mut ops, card, rect);
                     }
                 }
                 PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
@@ -89,7 +87,7 @@ impl PdfGenerator {
 
                 for (idx, card) in chunk.iter().enumerate() {
                     let rect = layout.card_rect(idx);
-                    ScorecardRenderer::draw_card(&mut ops, card, rect.x, rect.y, rect.w, rect.h);
+                    ScorecardRenderer::draw_card_rect(&mut ops, card, rect);
                 }
 
                 PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)

@@ -2,15 +2,32 @@ use super::model::Competition;
 use std::error::Error;
 use std::path::Path;
 
+/// Expands leading `~` or `~/` to the user's home directory.
+pub fn expand_tilde<P: AsRef<Path>>(path: P) -> std::path::PathBuf {
+    let p = path.as_ref();
+    if let Some(s) = p.to_str() {
+        if s == "~" {
+            if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+                return std::path::PathBuf::from(home);
+            }
+        } else if let Some(rest) = s.strip_prefix("~/") {
+            if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+                return std::path::PathBuf::from(home).join(rest);
+            }
+        }
+    }
+    p.to_path_buf()
+}
+
 /// Loader responsible for retrieving WCIF data from local files or the WCA website API.
 pub struct WcifLoader;
 
 impl WcifLoader {
     /// Loads a WCIF Competition from either a local file path or a WCA competition ID.
     pub fn load(source: &str) -> Result<Competition, Box<dyn Error>> {
-        let path = Path::new(source);
-        if path.exists() {
-            Self::load_from_file(path)
+        let expanded = expand_tilde(source);
+        if expanded.exists() {
+            Self::load_from_file(&expanded)
         } else {
             Self::fetch_from_wca(source)
         }
