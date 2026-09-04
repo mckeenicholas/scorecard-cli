@@ -2,7 +2,7 @@ pub mod generator;
 pub mod layout;
 pub mod renderer;
 
-pub use generator::PdfGenerator;
+pub use generator::{PdfGenerationError, PdfGenerator};
 pub use layout::{PageFormat, PageLayout, PaperSize};
 
 #[cfg(test)]

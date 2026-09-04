@@ -1,4 +1,4 @@
-use crate::options::{Cli, CoverSheetBy, ResolvedOptions, ShardBy};
+use crate::options::{Cli, CoverSheetBy, ResolvedOptions, SplitBy};
 use crate::pdf::{PageFormat, PaperSize};
 use crate::scorecard::{ScorecardPlanner, events::event_name_by_id};
 use crate::wcif::{Competition, WcifLoader, expand_tilde};
@@ -11,7 +11,6 @@ use crossterm::{
 };
 use inquire::{MultiSelect, Select};
 use std::collections::HashSet;
-use std::error::Error;
 use std::io::{Write, stdout};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
@@ -36,17 +35,17 @@ impl std::fmt::Display for RoundChoice {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CoverSheetChoice {
-    Stage,
-    Group,
     Round,
+    Group,
+    Stage,
 }
 
 impl std::fmt::Display for CoverSheetChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CoverSheetChoice::Stage => write!(f, "By Stage (one per group on each stage)"),
-            CoverSheetChoice::Group => write!(f, "By Group (one per group across all stages)"),
             CoverSheetChoice::Round => write!(f, "By Round (one for the entire round)"),
+            CoverSheetChoice::Group => write!(f, "By Group (one per group across all stages)"),
+            CoverSheetChoice::Stage => write!(f, "By Stage (one per group on each stage)"),
         }
     }
 }
@@ -54,7 +53,6 @@ impl std::fmt::Display for CoverSheetChoice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExtraOption {
     PrintStations,
-    AsciiOnly,
     LocalNamesFirst,
     PrintOneName,
     ScrambleCheckerTopRanked,
@@ -66,7 +64,6 @@ impl std::fmt::Display for ExtraOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ExtraOption::PrintStations => write!(f, "Print station numbers"),
-            ExtraOption::AsciiOnly => write!(f, "ASCII only (no unicode characters)"),
             ExtraOption::LocalNamesFirst => write!(f, "Display local names first"),
             ExtraOption::PrintOneName => write!(f, "Only print one name"),
             ExtraOption::ScrambleCheckerTopRanked => {
@@ -82,10 +79,59 @@ impl std::fmt::Display for ExtraOption {
     }
 }
 
+/// Error encountered during the interactive terminal prompt flow.
+#[derive(Debug)]
+pub enum InteractiveError {
+    Io(std::io::Error),
+    Prompt(inquire::InquireError),
+    Wcif(crate::wcif::WcifLoadError),
+    Aborted,
+}
+
+impl std::fmt::Display for InteractiveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InteractiveError::Io(e) => write!(f, "Interactive I/O error: {e}"),
+            InteractiveError::Prompt(e) => write!(f, "Interactive prompt error: {e}"),
+            InteractiveError::Wcif(e) => write!(f, "{e}"),
+            InteractiveError::Aborted => write!(f, "Interactive flow aborted by user"),
+        }
+    }
+}
+
+impl std::error::Error for InteractiveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            InteractiveError::Io(e) => Some(e),
+            InteractiveError::Prompt(e) => Some(e),
+            InteractiveError::Wcif(e) => Some(e),
+            InteractiveError::Aborted => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for InteractiveError {
+    fn from(err: std::io::Error) -> Self {
+        InteractiveError::Io(err)
+    }
+}
+
+impl From<inquire::InquireError> for InteractiveError {
+    fn from(err: inquire::InquireError) -> Self {
+        InteractiveError::Prompt(err)
+    }
+}
+
+impl From<crate::wcif::WcifLoadError> for InteractiveError {
+    fn from(err: crate::wcif::WcifLoadError) -> Self {
+        InteractiveError::Wcif(err)
+    }
+}
+
 struct RawModeGuard;
 
 impl RawModeGuard {
-    fn enter() -> Result<Self, Box<dyn Error>> {
+    fn enter() -> Result<Self, std::io::Error> {
         terminal::enable_raw_mode()?;
         Ok(Self)
     }
@@ -120,26 +166,25 @@ fn get_local_json_suggestions(query: &str) -> Vec<Suggestion> {
 /// Fallback / default search scanning '.' and 'tests/' for JSON files matching the name query.
 fn get_relative_json_suggestions(query: &str) -> Vec<Suggestion> {
     let query_lower = query.to_lowercase();
-    let mut files = Vec::new();
-
-    let mut scan_dir = |dir: &str| {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    if let Some(s) = path.to_str() {
-                        let clean = s.trim_start_matches("./").to_string();
-                        if query_lower.is_empty() || clean.to_lowercase().contains(&query_lower) {
-                            files.push(clean);
-                        }
-                    }
+    let mut files: Vec<String> = [".", "tests"]
+        .into_iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json")
+                && let Some(s) = path.to_str()
+            {
+                let clean = s.trim_start_matches("./").to_string();
+                if query_lower.is_empty() || clean.to_lowercase().contains(&query_lower) {
+                    return Some(clean);
                 }
             }
-        }
-    };
+            None
+        })
+        .collect();
 
-    scan_dir(".");
-    scan_dir("tests");
     files.sort();
     files.dedup();
 
@@ -152,68 +197,90 @@ fn get_relative_json_suggestions(query: &str) -> Vec<Suggestion> {
         .collect()
 }
 
-/// Dynamic path-based suggestions supporting '~', '/', subdirectories, and JSON files.
-fn get_path_suggestions(query: &str) -> Vec<Suggestion> {
-    let (scan_dir, display_prefix, filter) = if query == "~" {
+fn parse_path_query(query: &str) -> (std::path::PathBuf, String, &str) {
+    if query == "~" {
         (expand_tilde("~"), "~/".to_string(), "")
-    } else if let Some(last_sep) = query.rfind(|c| c == '/' || c == '\\') {
+    } else if let Some(last_sep) = query.rfind(['/', '\\']) {
         let parent_str = &query[..=last_sep];
         let filter = &query[last_sep + 1..];
         let scan_path = expand_tilde(parent_str);
         (scan_path, parent_str.to_string(), filter)
     } else {
-        (expand_tilde("~"), "~/".to_string(), query.trim_start_matches('~'))
-    };
+        (
+            expand_tilde("~"),
+            "~/".to_string(),
+            query.trim_start_matches('~'),
+        )
+    }
+}
 
+/// Dynamic path-based suggestions supporting '~', '/', subdirectories, and JSON files.
+fn get_path_suggestions(query: &str) -> Vec<Suggestion> {
+    let (scan_dir, display_prefix, filter) = parse_path_query(query);
     let filter_lower = filter.to_lowercase();
-    let mut file_suggestions = Vec::new();
-    let mut dir_suggestions = Vec::new();
 
-    if let Ok(entries) = std::fs::read_dir(&scan_dir) {
-        for entry in entries.flatten() {
-            let file_name = entry.file_name();
-            let name_str = file_name.to_string_lossy();
+    let (mut file_suggestions, mut dir_suggestions) = std::fs::read_dir(&scan_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name_str = entry.file_name().to_string_lossy().into_owned();
 
             // Ignore hidden files/folders unless query filter explicitly begins with '.'
             if name_str.starts_with('.') && !filter.starts_with('.') {
-                continue;
+                return None;
             }
 
             if !filter_lower.is_empty() && !name_str.to_lowercase().contains(&filter_lower) {
-                continue;
+                return None;
             }
 
             let path = entry.path();
             if path.is_dir() {
-                let val = format!("{}{}/", display_prefix, name_str);
-                let disp = format!("{}{}/ [dir]", display_prefix, name_str);
-                dir_suggestions.push(Suggestion {
-                    value: val,
-                    display: disp,
-                });
+                Some((
+                    false,
+                    Suggestion {
+                        value: format!("{}{}/", display_prefix, name_str),
+                        display: format!("{}{}/ [dir]", display_prefix, name_str),
+                    },
+                ))
             } else if path.extension().is_some_and(|ext| ext == "json") {
-                let val = format!("{}{}", display_prefix, name_str);
-                let disp = format!("{}{} [local file]", display_prefix, name_str);
-                file_suggestions.push(Suggestion {
-                    value: val,
-                    display: disp,
-                });
+                Some((
+                    true,
+                    Suggestion {
+                        value: format!("{}{}", display_prefix, name_str),
+                        display: format!("{}{} [local file]", display_prefix, name_str),
+                    },
+                ))
+            } else {
+                None
             }
-        }
-    }
+        })
+        .fold(
+            (Vec::new(), Vec::new()),
+            |(mut files, mut dirs), (is_file, suggestion)| {
+                if is_file {
+                    files.push(suggestion);
+                } else {
+                    dirs.push(suggestion);
+                }
+                (files, dirs)
+            },
+        );
 
     file_suggestions.sort_by(|a, b| a.value.cmp(&b.value));
     dir_suggestions.sort_by(|a, b| a.value.cmp(&b.value));
 
     // Show JSON files first, then directories
-    let mut results = file_suggestions;
-    results.extend(dir_suggestions);
-    results.truncate(40);
-    results
+    file_suggestions
+        .into_iter()
+        .chain(dir_suggestions)
+        .take(40)
+        .collect()
 }
 
 /// Queries the WCA API for competitions matching the search term.
-fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, Box<dyn Error + Send + Sync>> {
+fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, reqwest::Error> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_millis(2500))
         .build()?;
@@ -245,22 +312,39 @@ fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, Box<dyn Error 
     }
 
     let items: Vec<WcaItem> = resp.json()?;
+    let id_width = items
+        .iter()
+        .take(8)
+        .map(|item| item.id.len())
+        .max()
+        .unwrap_or(20)
+        .max(20);
+
     let suggestions = items
         .into_iter()
         .take(8)
         .map(|item| {
-            let country = item
-                .country_iso2
-                .map(|c| format!(" ({c})"))
-                .unwrap_or_default();
+            let display =
+                format_wca_suggestion(&item.id, &item.name, item.country_iso2.as_deref(), id_width);
             Suggestion {
-                value: item.id.clone(),
-                display: format!("{} - {}{}", item.id, item.name, country),
+                value: item.id,
+                display,
             }
         })
         .collect();
 
     Ok(suggestions)
+}
+
+/// Formats a WCA competition search suggestion into two aligned columns: ID and Name (with country).
+fn format_wca_suggestion(
+    id: &str,
+    name: &str,
+    country_iso2: Option<&str>,
+    id_width: usize,
+) -> String {
+    let country = country_iso2.map(|c| format!(" ({c})")).unwrap_or_default();
+    format!("{id:<id_width$}  {name}{country}")
 }
 
 struct SharedSearchState {
@@ -291,7 +375,7 @@ fn clear_widget_lines<W: Write>(out: &mut W, lines_count: usize) -> Result<(), s
 
 /// Interactively prompts the user for the competition ID or file path with real-time,
 /// debounced WCA API autocomplete and local file suggestions.
-fn prompt_competition_source() -> Result<String, Box<dyn Error>> {
+fn prompt_competition_source() -> Result<String, InteractiveError> {
     let _raw_guard = RawModeGuard::enter()?;
     let mut out = stdout();
 
@@ -371,12 +455,12 @@ fn prompt_competition_source() -> Result<String, Box<dyn Error>> {
     loop {
         // Check if background worker updated results or loading state
         {
-            if let Ok(state) = shared.lock() {
-                if state.api_version != last_api_version || state.is_loading != last_loading {
-                    needs_render = true;
-                    last_api_version = state.api_version;
-                    last_loading = state.is_loading;
-                }
+            if let Ok(state) = shared.lock()
+                && (state.api_version != last_api_version || state.is_loading != last_loading)
+            {
+                needs_render = true;
+                last_api_version = state.api_version;
+                last_loading = state.is_loading;
             }
         }
 
@@ -389,11 +473,9 @@ fn prompt_competition_source() -> Result<String, Box<dyn Error>> {
 
         let mut suggestions = local_suggestions;
         // Append API suggestions that aren't duplicates
-        for api_item in api_suggestions {
-            if !suggestions.iter().any(|s| s.value == api_item.value) {
-                suggestions.push(api_item);
-            }
-        }
+        let mut api_suggestions = api_suggestions;
+        api_suggestions.retain(|api| !suggestions.iter().any(|s| s.value == api.value));
+        suggestions.extend(api_suggestions);
 
         // Clamp selected index
         if let Some(idx) = selected_index {
@@ -446,8 +528,7 @@ fn prompt_competition_source() -> Result<String, Box<dyn Error>> {
                 (start, end)
             };
 
-            for i in start_idx..end_idx {
-                let item = &suggestions[i];
+            for (i, item) in suggestions.iter().enumerate().take(end_idx).skip(start_idx) {
                 let is_selected = selected_index == Some(i);
                 if is_selected {
                     queue!(
@@ -487,110 +568,109 @@ fn prompt_competition_source() -> Result<String, Box<dyn Error>> {
         }
 
         // Poll for event with 50ms timeout for fluid non-blocking UI
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(KeyEvent {
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(KeyEvent {
                 code,
                 modifiers,
                 kind: event::KeyEventKind::Press,
                 ..
             }) = event::read()?
-            {
-                match code {
-                    KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Err("Aborted by user".into());
-                    }
-                    KeyCode::Esc => {
-                        return Err("Aborted by user".into());
-                    }
-                    KeyCode::Enter => {
-                        let chosen = if let Some(idx) = selected_index {
-                            suggestions[idx].value.clone()
-                        } else {
-                            input_buffer.trim().to_string()
-                        };
-
-                        // If a directory was selected, navigate into it rather than submitting
-                        if chosen.ends_with('/') || chosen.ends_with('\\') {
-                            input_buffer = chosen;
-                            selected_index = None;
-                            let _ = tx.send(input_buffer.clone());
-                            needs_render = true;
-                            continue;
-                        }
-
-                        // Clean up dropdown lines completely
-                        clear_widget_lines(&mut out, previous_rendered_lines)?;
-
-                        // Print confirmed line
-                        queue!(
-                            out,
-                            style::SetForegroundColor(style::Color::Green),
-                            style::Print("✔ "),
-                            style::ResetColor,
-                            style::Print("Competition ID or WCIF file path: ".bold()),
-                            style::SetForegroundColor(style::Color::Cyan),
-                            style::Print(&chosen),
-                            style::ResetColor,
-                            style::Print("\r\n"),
-                        )?;
-                        out.flush()?;
-                        return Ok(chosen);
-                    }
-                    KeyCode::Down => {
-                        if !suggestions.is_empty() {
-                            selected_index = Some(match selected_index {
-                                None => 0,
-                                Some(i) => (i + 1).min(suggestions.len() - 1),
-                            });
-                            needs_render = true;
-                        }
-                    }
-                    KeyCode::Up => {
-                        selected_index = match selected_index {
-                            None => None,
-                            Some(0) => None,
-                            Some(i) => Some(i - 1),
-                        };
-                        needs_render = true;
-                    }
-                    KeyCode::Tab => {
-                        if let Some(idx) = selected_index {
-                            input_buffer = suggestions[idx].value.clone();
-                            selected_index = None;
-                            let _ = tx.send(input_buffer.clone());
-                            needs_render = true;
-                        } else if !suggestions.is_empty() {
-                            input_buffer = suggestions[0].value.clone();
-                            selected_index = None;
-                            let _ = tx.send(input_buffer.clone());
-                            needs_render = true;
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        input_buffer.pop();
-                        selected_index = None;
-                        let _ = tx.send(input_buffer.clone());
-                        needs_render = true;
-                    }
-                    KeyCode::Char(c) => {
-                        input_buffer.push(c);
-                        selected_index = None;
-                        let _ = tx.send(input_buffer.clone());
-                        needs_render = true;
-                    }
-                    _ => {}
+        {
+            match code {
+                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Err(InteractiveError::Aborted);
                 }
+                KeyCode::Esc => {
+                    return Err(InteractiveError::Aborted);
+                }
+                KeyCode::Enter => {
+                    let chosen = if let Some(idx) = selected_index {
+                        suggestions[idx].value.clone()
+                    } else {
+                        input_buffer.trim().to_string()
+                    };
+
+                    if chosen.is_empty() {
+                        continue;
+                    }
+
+                    // If a directory was selected, navigate into it rather than submitting
+                    if chosen.ends_with('/') || chosen.ends_with('\\') {
+                        input_buffer = chosen;
+                        selected_index = None;
+                        let _ = tx.send(input_buffer.clone());
+                        needs_render = true;
+                        continue;
+                    }
+
+                    // Clean up dropdown lines completely
+                    clear_widget_lines(&mut out, previous_rendered_lines)?;
+
+                    // Print confirmed line
+                    queue!(
+                        out,
+                        style::SetForegroundColor(style::Color::Green),
+                        style::Print("✔ "),
+                        style::ResetColor,
+                        style::Print("Competition ID or WCIF file path: ".bold()),
+                        style::SetForegroundColor(style::Color::Cyan),
+                        style::Print(&chosen),
+                        style::ResetColor,
+                        style::Print("\r\n"),
+                    )?;
+                    out.flush()?;
+                    return Ok(chosen);
+                }
+                KeyCode::Down => {
+                    if !suggestions.is_empty() {
+                        selected_index = Some(match selected_index {
+                            None => 0,
+                            Some(i) => (i + 1).min(suggestions.len() - 1),
+                        });
+                        needs_render = true;
+                    }
+                }
+                KeyCode::Up => {
+                    selected_index = match selected_index {
+                        None => None,
+                        Some(0) => None,
+                        Some(i) => Some(i - 1),
+                    };
+                    needs_render = true;
+                }
+                KeyCode::Tab => {
+                    if let Some(idx) = selected_index {
+                        input_buffer = suggestions[idx].value.clone();
+                        selected_index = None;
+                        let _ = tx.send(input_buffer.clone());
+                        needs_render = true;
+                    } else if !suggestions.is_empty() {
+                        input_buffer = suggestions[0].value.clone();
+                        selected_index = None;
+                        let _ = tx.send(input_buffer.clone());
+                        needs_render = true;
+                    }
+                }
+                KeyCode::Backspace => {
+                    input_buffer.pop();
+                    selected_index = None;
+                    let _ = tx.send(input_buffer.clone());
+                    needs_render = true;
+                }
+                KeyCode::Char(c) => {
+                    input_buffer.push(c);
+                    selected_index = None;
+                    let _ = tx.send(input_buffer.clone());
+                    needs_render = true;
+                }
+                _ => {}
             }
         }
     }
 }
 
-/// Runs the interactive terminal UI flow, prompting the user with pre-selected defaults from WCIF.
-pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
-    println!("\n=== Scorecard Generator - Interactive Mode ===\n");
-
-    // 1. Prompt for Competition source (ID or local WCIF file path) with debounced autocomplete
-    let (comp_source, comp) = loop {
+fn prompt_competition_and_load() -> Result<(String, Competition), InteractiveError> {
+    loop {
         let source = prompt_competition_source()?;
         let trimmed = source.trim();
         if trimmed.is_empty() {
@@ -601,43 +681,46 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
         match WcifLoader::load(trimmed) {
             Ok(c) => {
                 println!("Loaded competition: {} ({})\n", c.name, c.id);
-                break (trimmed.to_string(), c);
+                return Ok((trimmed.to_string(), c));
             }
             Err(e) => {
                 println!("Could not load competition '{trimmed}': {e}. Please try again.\n");
             }
         }
-    };
+    }
+}
 
-    // 2. Resolve default options directly from the WCIF Groupifier config
-    let default_opts =
-        ResolvedOptions::resolve(&Cli::default(), comp.get_groupifier_config().as_ref());
-
-    // 3. Events and rounds using checkboxes, with ready rounds pre-selected
-    let (default_targets, _) = ScorecardPlanner::resolve_targets(&comp, &[]);
+fn prompt_rounds_selection(comp: &Competition) -> Result<Vec<String>, InteractiveError> {
+    let (default_targets, _) = ScorecardPlanner::resolve_all_targets(comp);
     let default_round_ids: HashSet<String> =
         default_targets.into_iter().map(|t| t.round_id).collect();
 
-    let mut round_choices = Vec::new();
-    let mut default_round_indices = Vec::new();
+    let round_choices: Vec<RoundChoice> = comp
+        .events
+        .iter()
+        .filter(|e| e.id != "333fm")
+        .flat_map(|event| {
+            let event_name = event_name_by_id(&event.id).unwrap_or(&event.id);
+            event
+                .rounds
+                .iter()
+                .enumerate()
+                .map(move |(round_idx, round)| {
+                    let round_num = round_idx + 1;
+                    RoundChoice {
+                        round_id: round.id.clone(),
+                        display: format!("{event_name} - Round {round_num} ({})", round.id),
+                    }
+                })
+        })
+        .collect();
 
-    for event in &comp.events {
-        if event.id == "333fm" {
-            continue;
-        }
-        let event_name = event_name_by_id(&event.id).unwrap_or(&event.id);
-        for (round_idx, round) in event.rounds.iter().enumerate() {
-            let round_num = round_idx + 1;
-            let display = format!("{event_name} - Round {round_num} ({})", round.id);
-            if default_round_ids.contains(&round.id) {
-                default_round_indices.push(round_choices.len());
-            }
-            round_choices.push(RoundChoice {
-                round_id: round.id.clone(),
-                display,
-            });
-        }
-    }
+    let default_round_indices: Vec<usize> = round_choices
+        .iter()
+        .enumerate()
+        .filter(|(_, choice)| default_round_ids.contains(&choice.round_id))
+        .map(|(idx, _)| idx)
+        .collect();
 
     let selected_rounds = MultiSelect::new(
         "Events and rounds (Space to toggle checkboxes, Enter to confirm):",
@@ -646,13 +729,14 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
     .with_default(&default_round_indices)
     .prompt()?;
 
-    let events: Vec<String> = selected_rounds.into_iter().map(|r| r.round_id).collect();
+    Ok(selected_rounds.into_iter().map(|r| r.round_id).collect())
+}
 
-    // 4. Paper size (pre-selected from WCIF)
+fn prompt_paper_size(default_paper: PaperSize) -> Result<PaperSize, InteractiveError> {
     let paper_options = vec![PaperSize::A4, PaperSize::Letter, PaperSize::A6];
     let default_paper_idx = paper_options
         .iter()
-        .position(|p| *p == default_opts.paper)
+        .position(|p| *p == default_paper)
         .unwrap_or(0);
 
     let paper = Select::new(
@@ -662,11 +746,14 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
     .with_starting_cursor(default_paper_idx)
     .prompt()?;
 
-    // 5. Page layout format (pre-selected from WCIF)
+    Ok(paper)
+}
+
+fn prompt_page_format(default_format: PageFormat) -> Result<PageFormat, InteractiveError> {
     let format_options = vec![PageFormat::Group, PageFormat::Stacked];
     let default_format_idx = format_options
         .iter()
-        .position(|f| *f == default_opts.format)
+        .position(|f| *f == default_format)
         .unwrap_or(0);
 
     let format = Select::new(
@@ -676,36 +763,43 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
     .with_starting_cursor(default_format_idx)
     .prompt()?;
 
-    // 6. Cover sheets: Checkboxes for By Stage, By Group, By Round.
-    // If none are selected, it's equivalent to no cover sheets.
+    Ok(format)
+}
+
+fn prompt_cover_sheets_selection(
+    default_opts: &ResolvedOptions,
+) -> Result<Option<Vec<CoverSheetBy>>, InteractiveError> {
     let cover_choices = vec![
-        CoverSheetChoice::Stage,
-        CoverSheetChoice::Group,
         CoverSheetChoice::Round,
+        CoverSheetChoice::Group,
+        CoverSheetChoice::Stage,
     ];
 
-    let mut default_cover_indices = Vec::new();
-    if default_opts.cover_sheets {
-        for (idx, choice) in cover_choices.iter().enumerate() {
-            let matches = match choice {
-                CoverSheetChoice::Stage => {
-                    default_opts.cover_sheets_by.contains(&CoverSheetBy::Stage)
+    let default_cover_indices = if default_opts.cover_sheets {
+        let indices: Vec<usize> = cover_choices
+            .iter()
+            .enumerate()
+            .filter(|(_, choice)| match choice {
+                CoverSheetChoice::Round => {
+                    default_opts.cover_sheets_by.contains(&CoverSheetBy::Round)
                 }
                 CoverSheetChoice::Group => {
                     default_opts.cover_sheets_by.contains(&CoverSheetBy::Group)
                 }
-                CoverSheetChoice::Round => {
-                    default_opts.cover_sheets_by.contains(&CoverSheetBy::Round)
+                CoverSheetChoice::Stage => {
+                    default_opts.cover_sheets_by.contains(&CoverSheetBy::Stage)
                 }
-            };
-            if matches {
-                default_cover_indices.push(idx);
-            }
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+        if indices.is_empty() {
+            vec![2] // Default to Stage if cover_sheets was enabled without criteria
+        } else {
+            indices
         }
-        if default_cover_indices.is_empty() {
-            default_cover_indices.push(0); // Default to Stage if cover_sheets was enabled without criteria
-        }
-    }
+    } else {
+        Vec::new()
+    };
 
     let selected_cover = MultiSelect::new(
         "Include cover sheets (Space to toggle checkboxes, leave empty for none):",
@@ -714,39 +808,51 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
     .with_default(&default_cover_indices)
     .prompt()?;
 
-    let cover_sheets = if selected_cover.is_empty() {
-        None
+    if selected_cover.is_empty() {
+        Ok(None)
     } else {
-        Some(
+        Ok(Some(
             selected_cover
                 .into_iter()
                 .map(|c| match c {
-                    CoverSheetChoice::Stage => CoverSheetBy::Stage,
-                    CoverSheetChoice::Group => CoverSheetBy::Group,
                     CoverSheetChoice::Round => CoverSheetBy::Round,
+                    CoverSheetChoice::Group => CoverSheetBy::Group,
+                    CoverSheetChoice::Stage => CoverSheetBy::Stage,
                 })
                 .collect(),
-        )
-    };
+        ))
+    }
+}
 
-    // 7. PDF Sharding (Space to toggle, Enter to confirm)
-    let shard_selected = MultiSelect::new(
+fn prompt_split_selection() -> Result<Option<Vec<SplitBy>>, InteractiveError> {
+    let split_selected = MultiSelect::new(
         "Split scorecards into separate PDFs by (Space to toggle, Enter to confirm):",
-        vec![ShardBy::Event, ShardBy::Group, ShardBy::Stage],
+        vec![SplitBy::Event, SplitBy::Group, SplitBy::Stage],
     )
     .with_help_message("Leave empty to generate a single combined PDF")
     .prompt()?;
 
-    let shard = if shard_selected.is_empty() {
-        None
+    if split_selected.is_empty() {
+        Ok(None)
     } else {
-        Some(shard_selected)
-    };
+        Ok(Some(split_selected))
+    }
+}
 
-    // 8. Additional options (checkboxes pre-selected according to WCIF configuration)
+struct ExtraFlags {
+    print_stations: bool,
+    local_names_first: bool,
+    print_one_name: bool,
+    scramble_checker_top_ranked: bool,
+    scramble_checker_final_rounds: bool,
+    scramble_checker_blank: bool,
+}
+
+fn prompt_extra_options_selection(
+    default_opts: &ResolvedOptions,
+) -> Result<ExtraFlags, InteractiveError> {
     let extra_options_list = vec![
         ExtraOption::PrintStations,
-        ExtraOption::AsciiOnly,
         ExtraOption::LocalNamesFirst,
         ExtraOption::PrintOneName,
         ExtraOption::ScrambleCheckerTopRanked,
@@ -754,21 +860,19 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
         ExtraOption::ScrambleCheckerBlank,
     ];
 
-    let mut default_extra_indices = Vec::new();
-    for (idx, opt) in extra_options_list.iter().enumerate() {
-        let is_active = match opt {
+    let default_extra_indices: Vec<usize> = extra_options_list
+        .iter()
+        .enumerate()
+        .filter(|(_, opt)| match opt {
             ExtraOption::PrintStations => default_opts.print_stations,
-            ExtraOption::AsciiOnly => default_opts.ascii,
             ExtraOption::LocalNamesFirst => default_opts.local_names_first,
             ExtraOption::PrintOneName => default_opts.print_one_name,
             ExtraOption::ScrambleCheckerTopRanked => default_opts.scramble_checker_top_ranked,
             ExtraOption::ScrambleCheckerFinalRounds => default_opts.scramble_checker_final_rounds,
             ExtraOption::ScrambleCheckerBlank => default_opts.scramble_checker_blank,
-        };
-        if is_active {
-            default_extra_indices.push(idx);
-        }
-    }
+        })
+        .map(|(idx, _)| idx)
+        .collect();
 
     let extra_options = MultiSelect::new(
         "Additional options (Space to toggle checkboxes, Enter to confirm):",
@@ -777,30 +881,45 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), Box<dyn Error>> {
     .with_default(&default_extra_indices)
     .prompt()?;
 
-    let ascii = extra_options.contains(&ExtraOption::AsciiOnly);
-    let print_stations = Some(extra_options.contains(&ExtraOption::PrintStations));
-    let local_names_first = Some(extra_options.contains(&ExtraOption::LocalNamesFirst));
-    let print_one_name = Some(extra_options.contains(&ExtraOption::PrintOneName));
-    let scramble_checker_top_ranked =
-        Some(extra_options.contains(&ExtraOption::ScrambleCheckerTopRanked));
-    let scramble_checker_final_rounds =
-        Some(extra_options.contains(&ExtraOption::ScrambleCheckerFinalRounds));
-    let scramble_checker_blank = Some(extra_options.contains(&ExtraOption::ScrambleCheckerBlank));
+    Ok(ExtraFlags {
+        print_stations: extra_options.contains(&ExtraOption::PrintStations),
+        local_names_first: extra_options.contains(&ExtraOption::LocalNamesFirst),
+        print_one_name: extra_options.contains(&ExtraOption::PrintOneName),
+        scramble_checker_top_ranked: extra_options.contains(&ExtraOption::ScrambleCheckerTopRanked),
+        scramble_checker_final_rounds: extra_options
+            .contains(&ExtraOption::ScrambleCheckerFinalRounds),
+        scramble_checker_blank: extra_options.contains(&ExtraOption::ScrambleCheckerBlank),
+    })
+}
+
+/// Runs the interactive terminal UI flow, prompting the user with pre-selected defaults from WCIF.
+pub fn prompt_interactive_flow() -> Result<(Cli, Competition), InteractiveError> {
+    println!("\n=== Scorecard Generator - Interactive Mode ===\n");
+
+    let (comp_source, comp) = prompt_competition_and_load()?;
+    let default_opts =
+        ResolvedOptions::resolve(&Cli::default(), comp.get_groupifier_config().as_ref());
+
+    let events = prompt_rounds_selection(&comp)?;
+    let paper = prompt_paper_size(default_opts.paper)?;
+    let format = prompt_page_format(default_opts.format)?;
+    let cover_sheets = prompt_cover_sheets_selection(&default_opts)?;
+    let split = prompt_split_selection()?;
+    let extras = prompt_extra_options_selection(&default_opts)?;
 
     let cli = Cli {
         comp_source: Some(comp_source),
         events,
         paper: Some(paper),
         format: Some(format),
-        shard,
-        ascii,
+        split,
         cover_sheets,
-        local_names_first,
-        print_one_name,
-        print_stations,
-        scramble_checker_top_ranked,
-        scramble_checker_final_rounds,
-        scramble_checker_blank,
+        local_names_first: Some(extras.local_names_first),
+        print_one_name: Some(extras.print_one_name),
+        print_stations: Some(extras.print_stations),
+        scramble_checker_top_ranked: Some(extras.scramble_checker_top_ranked),
+        scramble_checker_final_rounds: Some(extras.scramble_checker_final_rounds),
+        scramble_checker_blank: Some(extras.scramble_checker_blank),
     };
 
     Ok((cli, comp))
@@ -879,9 +998,20 @@ mod tests {
             ExtraOption::PrintStations.to_string(),
             "Print station numbers"
         );
+        assert_eq!(ExtraOption::PrintOneName.to_string(), "Only print one name");
+    }
+
+    #[test]
+    fn test_format_wca_suggestion_alignment() {
+        let s1 = format_wca_suggestion("NAC2026", "North American Championship", Some("US"), 22);
+        let s2 = format_wca_suggestion("AjaxAutumnAM2026", "Ajax Autumn AM 2026", Some("CA"), 22);
         assert_eq!(
-            ExtraOption::AsciiOnly.to_string(),
-            "ASCII only (no unicode characters)"
+            s1,
+            "NAC2026                 North American Championship (US)"
         );
+        assert_eq!(s2, "AjaxAutumnAM2026        Ajax Autumn AM 2026 (CA)");
+        // Column 2 starts at index 24 (22 chars for ID + 2 spaces)
+        assert_eq!(&s1[..24], "NAC2026                 ");
+        assert_eq!(&s2[..24], "AjaxAutumnAM2026        ");
     }
 }

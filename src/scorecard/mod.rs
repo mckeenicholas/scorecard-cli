@@ -3,7 +3,7 @@ pub mod model;
 pub mod planner;
 
 pub use model::{ScorecardItem, TimeLimitInfo};
-pub use planner::ScorecardPlanner;
+pub use planner::{PlannerError, ScorecardPlanner};
 
 #[cfg(test)]
 mod tests {
@@ -167,12 +167,12 @@ mod tests {
             extensions: vec![],
         };
 
-        let (targets_all, _) = ScorecardPlanner::resolve_targets(&comp, &[]);
+        let (targets_all, _) = ScorecardPlanner::resolve_all_targets(&comp);
         assert_eq!(targets_all.len(), 1);
         assert_eq!(targets_all[0].event_id, "333");
 
         let (targets_explicit, notes_explicit) =
-            ScorecardPlanner::resolve_targets(&comp, &["333".to_string(), "333fm".to_string()]);
+            ScorecardPlanner::resolve_targets(&comp, &["333", "333fm"]);
         assert_eq!(targets_explicit.len(), 1);
         assert_eq!(targets_explicit[0].event_id, "333");
         assert_eq!(notes_explicit.len(), 1);
@@ -348,15 +348,14 @@ mod tests {
         // - 333-r2 (Round 2 with competitor assignments)
         // - 222-r1 (Round 1)
         // (222-r2 is omitted because it has no competitor assignments)
-        let (targets_all, _) = ScorecardPlanner::resolve_targets(&comp, &[]);
+        let (targets_all, _) = ScorecardPlanner::resolve_all_targets(&comp);
         assert_eq!(targets_all.len(), 3);
         assert_eq!(targets_all[0].round_id, "333-r1");
         assert_eq!(targets_all[1].round_id, "333-r2");
         assert_eq!(targets_all[2].round_id, "222-r1");
 
         // 2. Planning 333-r2 produces a NAMED scorecard for Alice (and NOT Bob):
-        let plan_r2 =
-            ScorecardPlanner::plan(&comp, &["333-r2".to_string()], false, &[], true).unwrap();
+        let plan_r2 = ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false).unwrap();
         assert_eq!(plan_r2.len(), 1);
         let alice_r2 = &plan_r2[0];
         assert_eq!(alice_r2.competitor_name, "Alice Smith");
@@ -365,8 +364,8 @@ mod tests {
 
         // 3. Planning 222-r2 explicitly (no assignments) produces blank scorecards:
         let plan_222_r2 =
-            ScorecardPlanner::plan(&comp, &["222-r2".to_string()], false, &[], true).unwrap();
-        assert!(plan_222_r2.len() > 0);
+            ScorecardPlanner::plan(&comp, &["222-r2"], false, &[], true, false).unwrap();
+        assert!(!plan_222_r2.is_empty());
         assert!(plan_222_r2[0].is_blank);
     }
 
@@ -494,8 +493,7 @@ mod tests {
         };
 
         // Plan Round 1
-        let cards_r1 =
-            ScorecardPlanner::plan(&comp, &["333-r1".to_string()], false, &[], true).unwrap();
+        let cards_r1 = ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], true, false).unwrap();
         assert_eq!(cards_r1.len(), 1);
         let card1 = &cards_r1[0];
         assert_eq!(card1.scorecard_number, 1);
@@ -519,8 +517,7 @@ mod tests {
         );
 
         // Plan Round 2 (advancement blanks)
-        let cards_r2 =
-            ScorecardPlanner::plan(&comp, &["333-r2".to_string()], false, &[], true).unwrap();
+        let cards_r2 = ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false).unwrap();
         assert_eq!(cards_r2.len(), 1);
         let blank_card = &cards_r2[0];
         assert_eq!(blank_card.scorecard_number, 1);
@@ -637,7 +634,7 @@ mod tests {
         // Additive cover sheets: Round (highest tier) -> Group -> Stage -> cards
         let plan_all = ScorecardPlanner::plan(
             &comp,
-            &["333-r1".to_string()],
+            &["333-r1"],
             true,
             &[
                 CoverSheetBy::Stage,
@@ -645,6 +642,7 @@ mod tests {
                 CoverSheetBy::Round,
             ],
             true,
+            false,
         )
         .unwrap();
         // 3 cover sheets (Round, Group, Stage) + 2 competitor cards = 5 items
@@ -688,10 +686,11 @@ mod tests {
         // 2. When only Stage is enabled (default -c):
         let plan_stage = ScorecardPlanner::plan(
             &comp,
-            &["333-r1".to_string()],
+            &["333-r1"],
             true,
             &[CoverSheetBy::Stage],
             true,
+            false,
         )
         .unwrap();
         assert_eq!(plan_stage.len(), 3);
@@ -702,10 +701,11 @@ mod tests {
         // 3. When only Group is enabled (-c g):
         let plan_g = ScorecardPlanner::plan(
             &comp,
-            &["333-r1".to_string()],
+            &["333-r1"],
             true,
             &[CoverSheetBy::Group],
             true,
+            false,
         )
         .unwrap();
         assert_eq!(plan_g.len(), 3);
@@ -716,10 +716,11 @@ mod tests {
         // 4. When only Round is enabled (-c r):
         let plan_r = ScorecardPlanner::plan(
             &comp,
-            &["333-r1".to_string()],
+            &["333-r1"],
             true,
             &[CoverSheetBy::Round],
             true,
+            false,
         )
         .unwrap();
         assert_eq!(plan_r.len(), 3);
@@ -874,7 +875,7 @@ mod tests {
         // Plan with all three criteria enabled (in reverse tier order to test sorting)
         let plan = ScorecardPlanner::plan(
             &comp,
-            &["333-r1".to_string()],
+            &["333-r1"],
             true,
             &[
                 CoverSheetBy::Stage,
@@ -882,6 +883,7 @@ mod tests {
                 CoverSheetBy::Round,
             ],
             true,
+            false,
         )
         .unwrap();
 
@@ -972,11 +974,39 @@ mod tests {
 
         let formatted = plan.format_summary();
         assert!(formatted.contains("Note: Skipped '333fm'"));
-        assert!(formatted.contains("[333 Round 1] (Open Round)"));
-        assert!(formatted.contains("Competitors: Alice, Bob"));
-        assert!(
-            formatted
-                .contains("[333 Round 2] (Subsequent Round) -> Generating 16 blank scorecards")
+        assert!(formatted.contains("Event      Round      Status       Competitors"));
+        assert!(formatted.contains("333        1          Open         2"));
+        assert!(formatted.contains("333        2          Subsequent   16 blank (top 16 ranking)"));
+    }
+
+    #[test]
+    fn test_format_competitor_name_and_print_one_name() {
+        use crate::scorecard::planner::format_competitor_name;
+
+        // When print_one_name is false: preserves original full name
+        assert_eq!(
+            format_competitor_name("Zhang San (张三)", false),
+            "Zhang San (张三)"
+        );
+        assert_eq!(
+            format_competitor_name("Lucas Burliga (Łukasz Burliga)", false),
+            "Lucas Burliga (Łukasz Burliga)"
+        );
+        assert_eq!(format_competitor_name("Alice Smith", false), "Alice Smith");
+
+        // When print_one_name is true: strips parenthesized local or Latin name
+        assert_eq!(
+            format_competitor_name("Zhang San (张三)", true),
+            "Zhang San"
+        );
+        assert_eq!(
+            format_competitor_name("Lucas Burliga (Łukasz Burliga)", true),
+            "Lucas Burliga"
+        );
+        assert_eq!(format_competitor_name("Alice Smith", true), "Alice Smith");
+        assert_eq!(
+            format_competitor_name("Kim Min-jun (김민준)", true),
+            "Kim Min-jun"
         );
     }
 }

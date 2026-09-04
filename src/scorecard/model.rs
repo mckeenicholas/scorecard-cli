@@ -229,7 +229,7 @@ impl<'a> ScorecardItem<'a> {
     /// Returns formatted competitor name.
     pub fn display_competitor_name(&self) -> &str {
         if self.is_blank {
-            "[ Blank Scorecard ]"
+            ""
         } else {
             self.competitor_name
         }
@@ -358,23 +358,71 @@ impl<'a> ScorecardPlan<'a> {
         }
     }
 
-    /// Formats the plan summary as a readable string for console output.
+    /// Formats the plan summary as a readable table with Event, Round, Status, and Competitors columns.
     pub fn format_summary(&self) -> String {
-        let mut out = String::new();
-        for note in &self.notes {
-            out.push_str(&format!("Note: {}\n", note));
-        }
-        out.push_str("\n--- Scorecard Generation Plan ---\n");
-        for summary in &self.summaries {
-            out.push_str(&summary.format());
-        }
-        out.push_str("---------------------------------");
-        out
-    }
+        let mut lines = Vec::new();
 
-    /// Prints the plan summary to stdout.
-    pub fn print_summary(&self) {
-        println!("{}", self.format_summary());
+        for note in &self.notes {
+            lines.push(format!("Note: {note}"));
+        }
+
+        if !self.summaries.is_empty() {
+            let sep_char = '─';
+            lines.push(format!(
+                "{:<10} {:<10} {:<12} {}",
+                "Event", "Round", "Status", "Competitors"
+            ));
+            lines.push(format!(
+                "{:<10} {:<10} {:<12} {}",
+                sep_char.to_string().repeat(8),
+                sep_char.to_string().repeat(8),
+                sep_char.to_string().repeat(10),
+                sep_char.to_string().repeat(14),
+            ));
+
+            for summary in &self.summaries {
+                match summary {
+                    PlannedRoundSummary::OpenRound {
+                        event_id,
+                        round_number,
+                        competitor_count,
+                        ..
+                    } => {
+                        let status = if *round_number == 1 {
+                            "Open"
+                        } else {
+                            "Assigned"
+                        };
+                        let competitors = competitor_count.to_string();
+                        lines.push(format!(
+                            "{:<10} {:<10} {:<12} {}",
+                            event_id, round_number, status, competitors
+                        ));
+                    }
+                    PlannedRoundSummary::SubsequentRound {
+                        event_id,
+                        round_number,
+                        blank_count,
+                        reason,
+                    } => {
+                        let status = "Subsequent";
+                        let competitors = format!("{blank_count} blank ({reason})");
+                        lines.push(format!(
+                            "{:<10} {:<10} {:<12} {}",
+                            event_id, round_number, status, competitors
+                        ));
+                    }
+                }
+            }
+        }
+
+        crate::progress::draw_box("Scorecards Generated", &lines)
+    }
+}
+
+impl<'a> std::fmt::Display for ScorecardPlan<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.format_summary())
     }
 }
 

@@ -667,6 +667,7 @@ dependencies = [
  "indicatif",
  "inquire",
  "itoa",
+ "lopdf",
  "mimalloc",
  "printpdf",
  "rayon",

@@ -3,7 +3,7 @@ pub mod loader;
 pub mod model;
 
 pub use advancement::AdvancementCalculator;
-pub use loader::{WcifLoader, expand_tilde};
+pub use loader::{WcifLoadError, WcifLoader, expand_tilde};
 pub use model::{
     Competition, Cutoff, Event, GroupifierCompetitionConfig, Person, Round, ScheduledActivityInfo,
     TimeLimit,

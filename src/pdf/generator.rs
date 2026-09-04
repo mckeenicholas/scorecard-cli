@@ -7,8 +7,44 @@ use printpdf::ops::PdfPage;
 use printpdf::serialize::PdfSaveOptions;
 use printpdf::units::Mm;
 use rayon::prelude::*;
-use std::error::Error;
 use std::io::Write;
+
+/// Error encountered during PDF generation or file serialization.
+#[derive(Debug)]
+pub enum PdfGenerationError {
+    Lopdf(lopdf::Error),
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for PdfGenerationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PdfGenerationError::Lopdf(e) => write!(f, "PDF serialization error: {e}"),
+            PdfGenerationError::Io(e) => write!(f, "PDF I/O error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for PdfGenerationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PdfGenerationError::Lopdf(e) => Some(e),
+            PdfGenerationError::Io(e) => Some(e),
+        }
+    }
+}
+
+impl From<lopdf::Error> for PdfGenerationError {
+    fn from(err: lopdf::Error) -> Self {
+        PdfGenerationError::Lopdf(err)
+    }
+}
+
+impl From<std::io::Error> for PdfGenerationError {
+    fn from(err: std::io::Error) -> Self {
+        PdfGenerationError::Io(err)
+    }
+}
 
 /// Generator responsible for parallel page chunking, scorecard rendering, and final PDF byte serialization.
 pub struct PdfGenerator {
@@ -32,16 +68,18 @@ impl PdfGenerator {
     }
 
     /// Generates a PDF containing all scorecards and streams directly to any Write destination (e.g. BufWriter<File>).
+    /// Returns the number of pages generated.
     pub fn generate_to_writer<W: Write>(
         &self,
         comp: &Competition,
         cards: &[ScorecardItem<'_>],
         writer: &mut W,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<usize, PdfGenerationError> {
         let pages = self.build_pages(cards);
+        let page_count = pages.len();
         let doc = Self::build_pdf_document(&comp.name, pages);
-        Self::save_document_to_writer(&doc, writer);
-        Ok(())
+        Self::save_document_to_writer(&doc, writer)?;
+        Ok(page_count)
     }
 
     /// Builds all PDF pages using parallel Rayon chunk processing.
@@ -69,7 +107,7 @@ impl PdfGenerator {
                     if card_idx < total_cards {
                         let card = &cards[card_idx];
                         let rect = layout.card_rect(slot);
-                        ScorecardRenderer::draw_card_rect(&mut ops, card, rect);
+                        ScorecardRenderer::draw_card(&mut ops, card, rect);
                     }
                 }
                 PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
@@ -87,7 +125,7 @@ impl PdfGenerator {
 
                 for (idx, card) in chunk.iter().enumerate() {
                     let rect = layout.card_rect(idx);
-                    ScorecardRenderer::draw_card_rect(&mut ops, card, rect);
+                    ScorecardRenderer::draw_card(&mut ops, card, rect);
                 }
 
                 PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
@@ -102,15 +140,17 @@ impl PdfGenerator {
         doc
     }
 
-    /// Serializes the document to the writer using fast options without extra compression passes.
-    fn save_document_to_writer<W: Write>(doc: &PdfDocument, writer: &mut W) {
-        let save_options = PdfSaveOptions {
-            optimize: false, // Disable expensive extra compression passes for maximum speed
-            ..Default::default()
-        };
-
+    /// Serializes the document to the writer, compressing page streams for compact PDF output.
+    fn save_document_to_writer<W: Write>(
+        doc: &PdfDocument,
+        writer: &mut W,
+    ) -> Result<(), PdfGenerationError> {
+        let save_options = PdfSaveOptions::default();
         let mut warnings = Vec::new();
-        doc.save_writer(writer, &save_options, &mut warnings);
+        let mut lopdf_doc = doc.to_lopdf_document(&save_options, &mut warnings);
+        lopdf_doc.compress();
+        lopdf_doc.save_to(writer)?;
+        Ok(())
     }
 
     /// Generates a PDF containing all scorecards into a byte buffer.
@@ -119,7 +159,7 @@ impl PdfGenerator {
         &self,
         comp: &Competition,
         cards: &[ScorecardItem<'_>],
-    ) -> Result<Vec<u8>, Box<dyn Error>> {
+    ) -> Result<Vec<u8>, PdfGenerationError> {
         let mut buffer = Vec::new();
         self.generate_to_writer(comp, cards, &mut buffer)?;
         Ok(buffer)

@@ -16,18 +16,31 @@ pub enum PaperSize {
     A6,
 }
 
+/// Error returned when parsing an invalid paper size string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsePaperSizeError(pub String);
+
+impl fmt::Display for ParsePaperSizeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid paper size '{}': must be one of 'a4', 'letter', or 'a6'",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ParsePaperSizeError {}
+
 impl FromStr for PaperSize {
-    type Err = String;
+    type Err = ParsePaperSizeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "a4" => Ok(PaperSize::A4),
             "letter" => Ok(PaperSize::Letter),
             "a6" => Ok(PaperSize::A6),
-            other => Err(format!(
-                "invalid paper size '{}': must be one of 'a4', 'letter', or 'a6'",
-                other
-            )),
+            other => Err(ParsePaperSizeError(other.to_string())),
         }
     }
 }
@@ -42,6 +55,22 @@ impl fmt::Display for PaperSize {
     }
 }
 
+/// Error returned when parsing an invalid page layout format string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsePageFormatError(pub String);
+
+impl fmt::Display for ParsePageFormatError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid format '{}': must be 'group' or 'stacked'",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ParsePageFormatError {}
+
 /// Page layout format for scorecards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,16 +83,13 @@ pub enum PageFormat {
 }
 
 impl FromStr for PageFormat {
-    type Err = String;
+    type Err = ParsePageFormatError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "group" => Ok(PageFormat::Group),
             "stacked" => Ok(PageFormat::Stacked),
-            other => Err(format!(
-                "invalid format '{}': must be 'group' or 'stacked'",
-                other
-            )),
+            other => Err(ParsePageFormatError(other.to_string())),
         }
     }
 }
@@ -179,6 +205,14 @@ pub struct RectSpec {
     pub h: f32,
 }
 
+impl RectSpec {
+    /// Creates a new `RectSpec` bounding rectangle.
+    #[inline]
+    pub const fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
+        Self { x, y, w, h }
+    }
+}
+
 /// PageLayout encapsulates paper geometry and scorecard positioning grid math.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageLayout {
@@ -232,12 +266,7 @@ impl PageLayout {
     }
 
     fn single_card_rect(&self) -> RectSpec {
-        RectSpec {
-            x: self.margin_x,
-            y: self.margin_y,
-            w: self.card_w,
-            h: self.card_h,
-        }
+        RectSpec::new(self.margin_x, self.margin_y, self.card_w, self.card_h)
     }
 
     fn grid_card_rect(&self, idx: usize) -> RectSpec {
@@ -253,12 +282,7 @@ impl PageLayout {
             _ => (self.margin_x + self.card_w + self.gap_x, self.margin_y),
         };
 
-        RectSpec {
-            x,
-            y,
-            w: self.card_w,
-            h: self.card_h,
-        }
+        RectSpec::new(x, y, self.card_w, self.card_h)
     }
 }
 

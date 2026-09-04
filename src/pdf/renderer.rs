@@ -135,9 +135,8 @@ impl AttemptTableSpec {
         attempt_count: usize,
         time_limit_info: Option<TimeLimitInfo>,
     ) -> Self {
-        let has_cutoff = time_limit_info.map_or(false, |info| {
-            info.cutoff_centiseconds.is_some() && info.cutoff_attempts > 0
-        });
+        let has_cutoff = time_limit_info
+            .is_some_and(|info| info.cutoff_centiseconds.is_some() && info.cutoff_attempts > 0);
 
         let cutoff_attempts = if has_cutoff {
             time_limit_info.map_or(0, |info| info.cutoff_attempts)
@@ -163,31 +162,37 @@ impl AttemptTableSpec {
             / Self::BASE_ATTEMPT_ROWS)
             .max(13.5);
 
-        let mut items = Vec::with_capacity(attempt_count + 3);
-        for i in 1..=attempt_count {
-            items.push(AttemptItem::Solve(i.to_string()));
-            if has_cutoff && i == cutoff_attempts {
-                if let Some(info) = time_limit_info {
-                    if let Some(cs) = info.cutoff_centiseconds {
-                        let cutoff_str = TimeLimitInfo::format_centiseconds(cs);
-                        let format_name = if attempt_count <= 3 {
-                            "mean"
-                        } else {
-                            "average"
-                        };
-                        items.push(AttemptItem::CutoffBanner(format!(
-                            "-------- Must have solve under {} to complete {} --------",
-                            cutoff_str, format_name
-                        )));
-                    }
-                }
-            }
-        }
+        let items: Vec<AttemptItem> = (1..=attempt_count)
+            .flat_map(|i| {
+                let solve = AttemptItem::Solve(i.to_string());
+                let banner = (has_cutoff && i == cutoff_attempts)
+                    .then(|| {
+                        time_limit_info
+                            .and_then(|info| info.cutoff_centiseconds)
+                            .map(|cs| {
+                                let cutoff_str = TimeLimitInfo::format_centiseconds(cs);
+                                let format_name = if attempt_count <= 3 {
+                                    "mean"
+                                } else {
+                                    "average"
+                                };
+                                AttemptItem::CutoffBanner(format!(
+                                    "-------- Must have solve under {} to complete {} --------",
+                                    cutoff_str, format_name
+                                ))
+                            })
+                    })
+                    .flatten();
 
-        items.push(AttemptItem::ExtraBanner(
-            "Extra or provisional solve (Delegate initials: ______ )".to_string(),
-        ));
-        items.push(AttemptItem::Solve(String::new()));
+                std::iter::once(solve).chain(banner)
+            })
+            .chain([
+                AttemptItem::ExtraBanner(
+                    "Extra or provisional solve (Delegate initials: ______ )".to_string(),
+                ),
+                AttemptItem::Solve(String::new()),
+            ])
+            .collect();
 
         let total_banners = items
             .iter()
@@ -197,10 +202,7 @@ impl AttemptTableSpec {
         let total_table_h =
             Self::HEADER_H + (total_attempts * row_h) + (total_banners * Self::BANNER_H);
 
-        let mut col_widths = [0.0f32; 5];
-        for (i, col) in ATTEMPT_COLUMNS.iter().enumerate() {
-            col_widths[i] = inner_w * col.ratio;
-        }
+        let col_widths = ATTEMPT_COLUMNS.map(|col| inner_w * col.ratio);
 
         Self {
             items,
@@ -224,11 +226,7 @@ pub struct CardPainter<'a> {
 }
 
 impl<'a> CardPainter<'a> {
-    pub fn new(
-        ops: &'a mut Vec<Op>,
-        bounds: RectSpec,
-        theme: &'a ScorecardTheme,
-    ) -> Self {
+    pub fn new(ops: &'a mut Vec<Op>, bounds: RectSpec, theme: &'a ScorecardTheme) -> Self {
         let pad = theme.padding;
         let inner_x = bounds.x + pad;
         let inner_w = bounds.w - 2.0 * pad;
@@ -254,17 +252,13 @@ impl<'a> CardPainter<'a> {
 
     #[inline]
     pub fn set_outline(&mut self, val: f32, thickness: f32) {
-        self.ops.push(Op::SetOutlineColor {
-            col: grey(val),
-        });
+        self.ops.push(Op::SetOutlineColor { col: grey(val) });
         self.ops.push(Op::SetOutlineThickness { pt: Pt(thickness) });
     }
 
     #[inline]
     pub fn set_fill(&mut self, val: f32) {
-        self.ops.push(Op::SetFillColor {
-            col: grey(val),
-        });
+        self.ops.push(Op::SetFillColor { col: grey(val) });
     }
 
     #[inline]
@@ -273,32 +267,14 @@ impl<'a> CardPainter<'a> {
     }
 
     #[inline]
-    pub fn draw_filled_rect(&mut self, x: f32, y: f32, w: f32, h: f32, val: f32) {
+    pub fn draw_filled_rect(&mut self, rect: RectSpec, val: f32) {
         self.set_fill(val);
-        self.ops.push(Op::DrawRectangle {
-            rectangle: Rect {
-                x: Pt(x),
-                y: Pt(y),
-                width: Pt(w),
-                height: Pt(h),
-                mode: Some(PaintMode::Fill),
-                winding_order: None,
-            },
-        });
+        TableDrawer::draw_rect(self.ops, rect, PaintMode::Fill);
     }
 
     #[inline]
-    pub fn draw_stroked_rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        self.ops.push(Op::DrawRectangle {
-            rectangle: Rect {
-                x: Pt(x),
-                y: Pt(y),
-                width: Pt(w),
-                height: Pt(h),
-                mode: Some(PaintMode::Stroke),
-                winding_order: None,
-            },
-        });
+    pub fn draw_stroked_rect(&mut self, rect: RectSpec) {
+        TableDrawer::draw_rect(self.ops, rect, PaintMode::Stroke);
     }
 
     /// Draws centered, full-width text across the card's printable horizontal area.
@@ -321,7 +297,7 @@ impl<'a> CardPainter<'a> {
     /// Draws the outer scorecard bounding box border.
     pub fn draw_outer_border(&mut self) {
         self.set_outline(0.0, self.theme.border_thickness);
-        self.draw_stroked_rect(self.bounds.x, self.bounds.y, self.bounds.w, self.bounds.h);
+        self.draw_stroked_rect(self.bounds);
     }
 
     /// Draws the top header: scorecard number in top-left corner and competition name centered.
@@ -345,12 +321,7 @@ impl<'a> CardPainter<'a> {
             );
         }
 
-        self.draw_full_width(
-            comp_name,
-            self.cur_y,
-            self.theme.comp_name_font_size,
-            true,
-        );
+        self.draw_full_width(comp_name, self.cur_y, self.theme.comp_name_font_size, true);
 
         self.advance_y(8.0);
     }
@@ -417,26 +388,40 @@ impl<'a> CardPainter<'a> {
 
     /// Draws the competitor ID, name, and WCA ID grid table.
     /// The competitor name is rendered in bold.
+    /// For blank scorecards, WCA ID is omitted and ID is empty to maximize space for writing the competitor's name.
     pub fn draw_competitor_info_table(&mut self, card: &ScorecardItem<'_>) {
         self.advance_y(5.0);
         let mut id_buf = itoa::Buffer::new();
-        let id_val = card
-            .registrant_id
-            .map(|id| id_buf.format(id))
-            .unwrap_or("-");
         let name_val = card.display_competitor_name();
-        let wca_id_val = card.display_wca_id();
 
-        self.draw_grid_table(
-            14.5,
-            20.0,
-            &[
-                ColumnDef::new("ID", 0.16, TextAlign::Center),
-                ColumnDef::bold("Competitor Name", 0.54, TextAlign::Left),
-                ColumnDef::new("WCA ID", 0.30, TextAlign::Center),
-            ],
-            &[&[id_val, name_val, wca_id_val]],
-        );
+        if card.is_blank {
+            self.draw_grid_table(
+                14.5,
+                20.0,
+                &[
+                    ColumnDef::new("ID", 0.16, TextAlign::Center),
+                    ColumnDef::bold("Competitor Name", 0.84, TextAlign::Left),
+                ],
+                &[&["", name_val]],
+            );
+        } else {
+            let id_val = card
+                .registrant_id
+                .map(|id| id_buf.format(id))
+                .unwrap_or("-");
+            let wca_id_val = card.display_wca_id();
+
+            self.draw_grid_table(
+                14.5,
+                20.0,
+                &[
+                    ColumnDef::new("ID", 0.16, TextAlign::Center),
+                    ColumnDef::bold("Competitor Name", 0.54, TextAlign::Left),
+                    ColumnDef::new("WCA ID", 0.30, TextAlign::Center),
+                ],
+                &[&[id_val, name_val, wca_id_val]],
+            );
+        }
     }
 
     /// Draws the attempt table dynamically sized to fill the remaining scorecard height,
@@ -471,10 +456,7 @@ impl<'a> CardPainter<'a> {
     fn draw_attempt_header(&mut self, top_y: f32, spec: &AttemptTableSpec) {
         let header_h = AttemptTableSpec::HEADER_H;
         self.draw_filled_rect(
-            self.inner_x,
-            top_y - header_h,
-            self.inner_w,
-            header_h,
+            RectSpec::new(self.inner_x, top_y - header_h, self.inner_w, header_h),
             self.theme.header_bg_grey,
         );
 
@@ -550,10 +532,12 @@ impl<'a> CardPainter<'a> {
                     let next_y = cur_row_y - AttemptTableSpec::BANNER_H;
 
                     self.draw_filled_rect(
-                        self.inner_x,
-                        next_y,
-                        self.inner_w,
-                        AttemptTableSpec::BANNER_H,
+                        RectSpec::new(
+                            self.inner_x,
+                            next_y,
+                            self.inner_w,
+                            AttemptTableSpec::BANNER_H,
+                        ),
                         self.theme.header_bg_grey,
                     );
 
@@ -571,7 +555,12 @@ impl<'a> CardPainter<'a> {
 
     fn draw_attempt_border(&mut self, bottom_y: f32, total_table_h: f32) {
         self.set_grid_stroke();
-        self.draw_stroked_rect(self.inner_x, bottom_y, self.inner_w, total_table_h);
+        self.draw_stroked_rect(RectSpec::new(
+            self.inner_x,
+            bottom_y,
+            self.inner_w,
+            total_table_h,
+        ));
     }
 
     fn draw_attempt_footer(&mut self, info: &str) {
@@ -585,15 +574,17 @@ impl<'a> CardPainter<'a> {
         let y_bot = self.cur_y - banner_h;
 
         self.draw_filled_rect(
-            self.inner_x,
-            y_bot,
-            self.inner_w,
-            banner_h,
+            RectSpec::new(self.inner_x, y_bot, self.inner_w, banner_h),
             self.theme.header_bg_grey,
         );
 
         self.set_outline(self.theme.grid_line_grey, self.theme.border_thickness);
-        self.draw_line(self.inner_x, self.cur_y, self.inner_x + self.inner_w, self.cur_y);
+        self.draw_line(
+            self.inner_x,
+            self.cur_y,
+            self.inner_x + self.inner_w,
+            self.cur_y,
+        );
         self.draw_line(self.inner_x, y_bot, self.inner_x + self.inner_w, y_bot);
 
         self.draw_full_width(title, y_bot + 3.5, 8.5, true);
@@ -611,7 +602,7 @@ impl<'a> CardPainter<'a> {
         let box_y = self.cur_y - 1.0;
 
         self.set_outline(0.2, 0.75);
-        self.draw_stroked_rect(start_x, box_y, box_size, box_size);
+        self.draw_stroked_rect(RectSpec::new(start_x, box_y, box_size, box_size));
 
         TextDrawer::draw(
             self.ops,
@@ -653,12 +644,7 @@ impl<'a> CardPainter<'a> {
         let line_end_x = start_x + total_w;
 
         self.set_outline(0.4, 0.5);
-        self.draw_line(
-            line_start_x,
-            self.cur_y - 1.0,
-            line_end_x,
-            self.cur_y - 1.0,
-        );
+        self.draw_line(line_start_x, self.cur_y - 1.0, line_end_x, self.cur_y - 1.0);
     }
 
     /// Draws a complete competitor scorecard.
@@ -748,20 +734,13 @@ pub struct ScorecardRenderer;
 impl ScorecardRenderer {
     /// Draws a complete scorecard or cover sheet within the given bounding rectangle.
     #[inline]
-    pub fn draw_card_rect(ops: &mut Vec<Op>, card: &ScorecardItem<'_>, bounds: RectSpec) {
+    pub fn draw_card(ops: &mut Vec<Op>, card: &ScorecardItem<'_>, bounds: RectSpec) {
         let mut painter = CardPainter::new(ops, bounds, &DEFAULT_THEME);
         if card.is_cover_sheet {
             painter.draw_cover_sheet(card);
         } else {
             painter.draw_competitor_card(card);
         }
-    }
-
-    /// Draws a complete scorecard or cover sheet within the given bounding rectangle (x, y, w, h).
-    #[inline]
-    #[allow(dead_code)]
-    pub fn draw_card(ops: &mut Vec<Op>, card: &ScorecardItem<'_>, x: f32, y: f32, w: f32, h: f32) {
-        Self::draw_card_rect(ops, card, RectSpec { x, y, w, h });
     }
 }
 
@@ -792,16 +771,11 @@ impl TableDrawer {
         ops.push(Op::SetFillColor {
             col: grey(theme.header_bg_grey),
         });
-        ops.push(Op::DrawRectangle {
-            rectangle: Rect {
-                x: Pt(spec.tbl_x),
-                y: Pt(top_y - spec.header_h),
-                width: Pt(spec.tbl_w),
-                height: Pt(spec.header_h),
-                mode: Some(PaintMode::Fill),
-                winding_order: None,
-            },
-        });
+        Self::draw_rect(
+            ops,
+            RectSpec::new(spec.tbl_x, top_y - spec.header_h, spec.tbl_w, spec.header_h),
+            PaintMode::Fill,
+        );
     }
 
     fn draw_header_text(
@@ -839,7 +813,7 @@ impl TableDrawer {
                 let col = spec.columns.get(i);
                 let w = col.map_or(0.0, |c| c.ratio * spec.tbl_w);
                 let align = col.map_or(TextAlign::Center, |c| c.align);
-                let bold = col.map_or(false, |c| c.bold);
+                let bold = col.is_some_and(|c| c.bold);
                 TextDrawer::draw(
                     ops,
                     TextSpec {
@@ -887,16 +861,11 @@ impl TableDrawer {
         bottom_y: f32,
         total_h: f32,
     ) {
-        ops.push(Op::DrawRectangle {
-            rectangle: Rect {
-                x: Pt(spec.tbl_x),
-                y: Pt(bottom_y),
-                width: Pt(spec.tbl_w),
-                height: Pt(total_h),
-                mode: Some(PaintMode::Stroke),
-                winding_order: None,
-            },
-        });
+        Self::draw_rect(
+            ops,
+            RectSpec::new(spec.tbl_x, bottom_y, spec.tbl_w, total_h),
+            PaintMode::Stroke,
+        );
     }
 
     fn draw_horizontal_dividers(ops: &mut Vec<Op>, spec: &TableSpec<'_>, top_y: f32) {
@@ -919,10 +888,28 @@ impl TableDrawer {
 
     fn draw_vertical_dividers(ops: &mut Vec<Op>, spec: &TableSpec<'_>, top_y: f32, bottom_y: f32) {
         let mut sep_x = spec.tbl_x;
-        for col in spec.columns.iter().take(spec.columns.len().saturating_sub(1)) {
+        for col in spec
+            .columns
+            .iter()
+            .take(spec.columns.len().saturating_sub(1))
+        {
             sep_x += col.ratio * spec.tbl_w;
             Self::draw_line(ops, sep_x, top_y, sep_x, bottom_y);
         }
+    }
+
+    /// Draws a styled rectangle primitive (fill or stroke) using RectSpec geometry.
+    pub fn draw_rect(ops: &mut Vec<Op>, rect: RectSpec, mode: PaintMode) {
+        ops.push(Op::DrawRectangle {
+            rectangle: Rect {
+                x: Pt(rect.x),
+                y: Pt(rect.y),
+                width: Pt(rect.w),
+                height: Pt(rect.h),
+                mode: Some(mode),
+                winding_order: None,
+            },
+        });
     }
 
     /// Draws a line between two points.
@@ -991,9 +978,7 @@ impl TextDrawer {
         y: f32,
         text: &str,
     ) {
-        ops.push(Op::SetFillColor {
-            col: grey(0.0),
-        });
+        ops.push(Op::SetFillColor { col: grey(0.0) });
         ops.push(Op::StartTextSection);
         ops.push(Op::SetFont {
             font,
@@ -1071,7 +1056,7 @@ mod tests {
         };
 
         let mut ops = Vec::new();
-        ScorecardRenderer::draw_card(&mut ops, &card, 18.0, 18.0, 270.0, 380.0);
+        ScorecardRenderer::draw_card(&mut ops, &card, RectSpec::new(18.0, 18.0, 270.0, 380.0));
 
         // Verify that operations were generated (borders, rects, text items)
         assert!(!ops.is_empty());
@@ -1089,7 +1074,10 @@ mod tests {
             }));
             is_bold_font && has_alice
         });
-        assert!(has_bold_name, "Competitor name should be rendered in bold font");
+        assert!(
+            has_bold_name,
+            "Competitor name should be rendered in bold font"
+        );
     }
 
     #[test]
@@ -1114,7 +1102,11 @@ mod tests {
         };
 
         let mut ops = Vec::new();
-        ScorecardRenderer::draw_card(&mut ops, &cover_card, 18.0, 18.0, 270.0, 380.0);
+        ScorecardRenderer::draw_card(
+            &mut ops,
+            &cover_card,
+            RectSpec::new(18.0, 18.0, 270.0, 380.0),
+        );
 
         assert!(!ops.is_empty());
         let has_rectangles = ops.iter().any(|op| matches!(op, Op::DrawRectangle { .. }));
@@ -1158,10 +1150,7 @@ mod tests {
         ScorecardRenderer::draw_card(
             &mut ops_no_station,
             &card_no_station,
-            18.0,
-            18.0,
-            270.0,
-            380.0,
+            RectSpec::new(18.0, 18.0, 270.0, 380.0),
         );
         let has_station_header = ops_no_station.iter().any(|op| match op {
             Op::ShowText { items } => items.iter().any(|item| match item {
@@ -1183,10 +1172,7 @@ mod tests {
         ScorecardRenderer::draw_card(
             &mut ops_with_station,
             &card_with_station,
-            18.0,
-            18.0,
-            270.0,
-            380.0,
+            RectSpec::new(18.0, 18.0, 270.0, 380.0),
         );
         let has_station_header_with = ops_with_station.iter().any(|op| match op {
             Op::ShowText { items } => items.iter().any(|item| match item {
@@ -1228,7 +1214,7 @@ mod tests {
         };
 
         let mut ops = Vec::new();
-        ScorecardRenderer::draw_card(&mut ops, &card, 18.0, 18.0, 270.0, 380.0);
+        ScorecardRenderer::draw_card(&mut ops, &card, RectSpec::new(18.0, 18.0, 270.0, 380.0));
 
         // Verify that the cutoff banner text is rendered
         let has_cutoff_banner = ops.iter().any(|op| match op {
@@ -1269,6 +1255,59 @@ mod tests {
         assert!(
             has_time_limit_footer,
             "Time limit footer should be rendered at the bottom"
+        );
+    }
+
+    #[test]
+    fn test_draw_blank_card_omits_wca_id_and_id_hyphen() {
+        let blank_card = ScorecardItem {
+            scorecard_number: 1,
+            station_number: None,
+            competition_name: "Test Comp 2026",
+            event_id: "333",
+            event_name: "3x3x3 Cube",
+            round_number: 2,
+            group_number: 1,
+            stage_name: None,
+            competitor_name: "",
+            registrant_id: None,
+            wca_id: None,
+            attempt_count: 5,
+            time_limit_info: None,
+            is_blank: true,
+            is_cover_sheet: false,
+            total_group_cards: 0,
+        };
+
+        let mut ops = Vec::new();
+        ScorecardRenderer::draw_card(
+            &mut ops,
+            &blank_card,
+            RectSpec::new(18.0, 18.0, 270.0, 380.0),
+        );
+
+        let has_wca_id_header = ops.iter().any(|op| match op {
+            Op::ShowText { items } => items.iter().any(|item| match item {
+                printpdf::ops::TextItem::Text(s) => s.contains("WCA ID"),
+                _ => false,
+            }),
+            _ => false,
+        });
+        assert!(
+            !has_wca_id_header,
+            "Blank scorecard must omit the WCA ID column header"
+        );
+
+        let has_hyphen = ops.iter().any(|op| match op {
+            Op::ShowText { items } => items.iter().any(|item| match item {
+                printpdf::ops::TextItem::Text(s) => s.as_str() == "-",
+                _ => false,
+            }),
+            _ => false,
+        });
+        assert!(
+            !has_hyphen,
+            "Blank scorecard must not print '-' in the ID space"
         );
     }
 }

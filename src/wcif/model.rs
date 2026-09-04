@@ -67,22 +67,17 @@ impl Competition {
 
     /// Finds and parses the Groupifier extension if present.
     pub fn get_groupifier_config(&self) -> Option<GroupifierCompetitionConfig> {
-        for ext in &self.extensions {
-            if ext.id == "groupifier.CompetitionConfig"
-                && let Ok(cfg) =
-                    serde_json::from_value::<GroupifierCompetitionConfig>(ext.data.clone())
-            {
-                return Some(cfg);
+        self.extensions.iter().find_map(|ext| {
+            if ext.id == "groupifier.CompetitionConfig" {
+                serde_json::from_value::<GroupifierCompetitionConfig>(ext.data.clone()).ok()
+            } else if ext.id == "org.worldcubeassociation.groupifier" {
+                serde_json::from_value::<GroupifierExtensionData>(ext.data.clone())
+                    .ok()
+                    .and_then(|ext_data| ext_data.competition_config)
+            } else {
+                None
             }
-            if ext.id == "org.worldcubeassociation.groupifier"
-                && let Ok(ext_data) =
-                    serde_json::from_value::<GroupifierExtensionData>(ext.data.clone())
-                && let Some(cfg) = ext_data.competition_config
-            {
-                return Some(cfg);
-            }
-        }
-        None
+        })
     }
 
     /// Counts accepted competing competitors registered for a specific event.
