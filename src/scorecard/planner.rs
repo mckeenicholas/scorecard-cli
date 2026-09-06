@@ -246,7 +246,7 @@ fn collect_open_round_competitors<'a>(
         }
 
         let competitor = Competitor::from_person(person, ctx.print_one_name);
-        let item = ScorecardItem::competitor(
+        let item = ScorecardItem::scorecard(
             comp_name,
             ctx.target.event,
             ctx.target.round_number,
@@ -270,11 +270,18 @@ fn collect_open_round_competitors<'a>(
 /// 1. Cards with station numbers come first, sorted by station number ascending.
 /// 2. Cards without station numbers (or sharing the same station number) are sorted alphabetically by competitor.
 pub fn sort_group_cards(cards: &mut [ScorecardItem<'_>]) {
-    cards.sort_by(|a, b| match (a.station_number, b.station_number) {
-        (Some(s_a), Some(s_b)) => s_a.cmp(&s_b).then_with(|| a.competitor.cmp(&b.competitor)),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.competitor.cmp(&b.competitor),
+    cards.sort_by(|a, b| match (a, b) {
+        (ScorecardItem::Scorecard(sc_a), ScorecardItem::Scorecard(sc_b)) => {
+            match (sc_a.station_number, sc_b.station_number) {
+                (Some(s_a), Some(s_b)) => s_a
+                    .cmp(&s_b)
+                    .then_with(|| sc_a.competitor.cmp(&sc_b.competitor)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => sc_a.competitor.cmp(&sc_b.competitor),
+            }
+        }
+        _ => std::cmp::Ordering::Equal,
     });
 }
 
@@ -304,7 +311,6 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
             ctx.target.round_number,
             0,
             None,
-            ctx.attempt_count,
             count,
         ));
     }
@@ -326,7 +332,6 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
                 ctx.target.round_number,
                 group_num,
                 None,
-                ctx.attempt_count,
                 group_total,
             ));
             current_group = Some(group_num);
@@ -341,7 +346,6 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
                 ctx.target.round_number,
                 group_num,
                 stage_name,
-                ctx.attempt_count,
                 card_list.len(),
             ));
         }
@@ -384,7 +388,6 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
                 ctx.target.round_number,
                 0,
                 None,
-                ctx.attempt_count,
                 adv_result.blank_count,
             ));
         }
@@ -397,7 +400,6 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
                 ctx.target.round_number,
                 1,
                 None,
-                ctx.attempt_count,
                 adv_result.blank_count,
             ));
         }
@@ -410,7 +412,6 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
                 ctx.target.round_number,
                 1,
                 round_stage,
-                ctx.attempt_count,
                 adv_result.blank_count,
             ));
         }
@@ -555,7 +556,7 @@ impl ScorecardPlanner {
             Self::plan_target_round(comp, target, &activity_map, config, &mut plan)?;
         }
 
-        plan.assign_scorecard_numbers();
+        plan.assign_numbers();
         Ok(plan)
     }
 

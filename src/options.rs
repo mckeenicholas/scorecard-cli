@@ -255,6 +255,18 @@ pub struct Cli {
     )]
     pub scramble_checker_blank: Option<bool>,
 
+    /// Start each group on a new page (inserts blank spaces so the first scorecard/cover sheet of a group is at top-left)
+    #[arg(
+        long = "start-group-on-new-page",
+        visible_alias = "group-new-page",
+        visible_alias = "new-page-per-group",
+        visible_alias = "start-groups-on-new-page",
+        num_args = 0..=1,
+        default_missing_value = "true",
+        value_name = "BOOL"
+    )]
+    pub start_group_on_new_page: Option<bool>,
+
     /// Path to a custom TTF/OTF/TTC font file for rendering local competitor names (auto-detected if omitted)
     #[arg(long, value_name = "PATH")]
     pub font: Option<PathBuf>,
@@ -314,6 +326,7 @@ pub struct ResolvedOptions {
     pub scramble_checker_top_ranked: bool,   // TODO: wire to renderer
     pub scramble_checker_final_rounds: bool, // TODO: wire to renderer
     pub scramble_checker_blank: bool,        // TODO: wire to renderer
+    pub start_group_on_new_page: bool,
     pub font: Option<PathBuf>,
 }
 
@@ -331,6 +344,7 @@ impl Default for ResolvedOptions {
             scramble_checker_top_ranked: false,
             scramble_checker_final_rounds: false,
             scramble_checker_blank: false,
+            start_group_on_new_page: false,
             font: None,
         }
     }
@@ -382,6 +396,10 @@ impl ResolvedOptions {
             &mut self.scramble_checker_blank,
             cfg.print_scramble_checker_for_blank_scorecards,
         );
+        Self::apply_optional(
+            &mut self.start_group_on_new_page,
+            cfg.start_group_on_new_page,
+        );
     }
 
     /// Layer 2: Applies explicit CLI argument overrides.
@@ -424,6 +442,10 @@ impl ResolvedOptions {
             cli.scramble_checker_final_rounds,
         );
         Self::apply_optional(&mut self.scramble_checker_blank, cli.scramble_checker_blank);
+        Self::apply_optional(
+            &mut self.start_group_on_new_page,
+            cli.start_group_on_new_page,
+        );
         if let Some(ref f) = cli.font {
             self.font = Some(f.clone());
         }
@@ -537,6 +559,7 @@ impl ResolvedOptions {
 
         // Active Options
         let flags: &[(&str, bool)] = &[
+            ("Start Group on New Page", self.start_group_on_new_page),
             ("Local Names First", self.local_names_first),
             ("Print One Name", self.print_one_name),
             ("Print Stations", self.print_stations),
@@ -847,5 +870,27 @@ mod tests {
         assert!(summary_custom.contains("Active Options:"));
         assert!(summary_custom.contains("Print Stations"));
         assert!(summary_custom.contains('✔'));
+    }
+
+    #[test]
+    fn test_cli_start_group_on_new_page_flag() {
+        let cli = Cli::try_parse_from(vec![
+            "scorecard-gen",
+            "Comp2026",
+            "--start-group-on-new-page",
+        ])
+        .unwrap();
+        assert_eq!(cli.start_group_on_new_page, Some(true));
+
+        let resolved = ResolvedOptions::resolve(&cli, None);
+        assert!(resolved.start_group_on_new_page);
+
+        let summary = resolved.format_summary();
+        assert!(summary.contains("Start Group on New Page"));
+
+        // Test alias
+        let cli_alias =
+            Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "--group-new-page"]).unwrap();
+        assert_eq!(cli_alias.start_group_on_new_page, Some(true));
     }
 }

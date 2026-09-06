@@ -5,11 +5,10 @@ pub mod planner;
 #[cfg(test)]
 pub use crate::wcif::WcaId;
 pub use events::WcaEvent;
-#[cfg(test)]
 pub use model::Competitor;
+pub use model::{BlankScorecard, CoverSheet, Scorecard, ScorecardItem, TimeLimitInfo};
 #[cfg(test)]
 pub use model::{InvalidWcaResult, WcaResult};
-pub use model::{ScorecardItem, TimeLimitInfo};
 pub use planner::{PlannerError, ScorecardPlanner};
 
 #[cfg(test)]
@@ -92,76 +91,107 @@ mod tests {
 
     #[test]
     fn test_scorecard_item_display_methods() {
-        let item = ScorecardItem {
-            scorecard_number: 42,
-            station_number: Some(7),
-            competition_name: "Very Long Competition Name 2026",
-            event: WcaEvent::E333,
-            round_number: 1,
-            group_number: 1,
-            stage_name: Some("Red Stage"),
-            competitor: Some(Competitor {
+        let item = ScorecardItem::scorecard(
+            "Very Long Competition Name 2026",
+            WcaEvent::E333,
+            1,
+            1,
+            Some("Red Stage"),
+            Competitor {
                 name: "Alice Smith",
                 local_name: None,
                 registrant_id: NonZeroUsize::new(10).unwrap(),
                 wca_id: WcaId::parse("2022SMIT01"),
-            }),
-            attempt_count: 5,
-            time_limit_info: Some(TimeLimitInfo {
+            },
+            Some(7),
+            5,
+            Some(TimeLimitInfo {
                 limit_centiseconds: WcaResult::new(30000),
                 is_cumulative: false,
                 cutoff_centiseconds: WcaResult::new(6000),
                 cutoff_attempts: 2,
             }),
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        };
-
-        assert_eq!(item.display_competitor_name(), ("Alice Smith", None));
-        assert_eq!(item.display_wca_id(), "2022SMIT01");
-        assert_eq!(item.truncated_competition_name(20), "Very Long Competi...");
-        assert_eq!(
-            item.formatted_time_limit_info(),
-            Some("Cutoff: < 1:00.00 (2 att)  |  Time limit: 5:00.00".to_string())
         );
+
+        if let ScorecardItem::Scorecard(sc) = &item {
+            assert_eq!(sc.competitor.display_name(), ("Alice Smith", None));
+            assert_eq!(sc.competitor.display_wca_id(), "2022SMIT01");
+            assert_eq!(sc.truncated_competition_name(20), "Very Long Competi...");
+            assert_eq!(
+                sc.formatted_time_limit_info(),
+                Some("Cutoff: < 1:00.00 (2 att)  |  Time limit: 5:00.00".to_string())
+            );
+        } else {
+            panic!("Expected Scorecard");
+        }
     }
 
     #[test]
     fn test_sort_group_cards_station_and_name() {
-        let card1 = ScorecardItem {
-            competitor: Some(Competitor::simple("Zack")),
-            station_number: Some(2),
-            ..Default::default()
-        };
-        let card2 = ScorecardItem {
-            competitor: Some(Competitor::simple("Alice")),
-            station_number: Some(1),
-            ..Default::default()
-        };
-        let card3 = ScorecardItem {
-            competitor: Some(Competitor::simple("Charlie")),
-            station_number: None,
-            ..Default::default()
-        };
-        let card4 = ScorecardItem {
-            competitor: Some(Competitor::simple("Bob")),
-            station_number: None,
-            ..Default::default()
-        };
+        let card1 = ScorecardItem::scorecard(
+            "Test Comp",
+            WcaEvent::E333,
+            1,
+            1,
+            None,
+            Competitor::simple("Zack"),
+            Some(2),
+            5,
+            None,
+        );
+        let card2 = ScorecardItem::scorecard(
+            "Test Comp",
+            WcaEvent::E333,
+            1,
+            1,
+            None,
+            Competitor::simple("Alice"),
+            Some(1),
+            5,
+            None,
+        );
+        let card3 = ScorecardItem::scorecard(
+            "Test Comp",
+            WcaEvent::E333,
+            1,
+            1,
+            None,
+            Competitor::simple("Charlie"),
+            None,
+            5,
+            None,
+        );
+        let card4 = ScorecardItem::scorecard(
+            "Test Comp",
+            WcaEvent::E333,
+            1,
+            1,
+            None,
+            Competitor::simple("Bob"),
+            None,
+            5,
+            None,
+        );
 
         let mut cards = vec![card1, card2, card3, card4];
         planner::sort_group_cards(&mut cards);
 
-        // Station numbers first: 1 (Alice), then 2 (Zack), then no station sorted alphabetically: Bob, Charlie
-        assert_eq!(cards[0].competitor_name(), "Alice");
-        assert_eq!(cards[0].station_number, Some(1));
-        assert_eq!(cards[1].competitor_name(), "Zack");
-        assert_eq!(cards[1].station_number, Some(2));
-        assert_eq!(cards[2].competitor_name(), "Bob");
-        assert_eq!(cards[2].station_number, None);
-        assert_eq!(cards[3].competitor_name(), "Charlie");
-        assert_eq!(cards[3].station_number, None);
+        let names_and_stations: Vec<_> = cards
+            .iter()
+            .map(|c| match c {
+                ScorecardItem::Scorecard(sc) => (sc.competitor.name, sc.station_number),
+                _ => panic!("Expected Scorecard"),
+            })
+            .collect();
+        assert_eq!(
+            names_and_stations,
+            vec![
+                ("Alice", Some(1)),
+                ("Zack", Some(2)),
+                ("Bob", None),
+                ("Charlie", None)
+            ]
+        );
     }
 
     #[test]
@@ -483,15 +513,19 @@ mod tests {
         let plan_r2 = ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false).unwrap();
         assert_eq!(plan_r2.len(), 1);
         let alice_r2 = &plan_r2[0];
-        assert_eq!(alice_r2.competitor_name(), "Alice Smith");
-        assert_eq!(alice_r2.round_number, 2);
-        assert_eq!(alice_r2.station_number, Some(5));
+        if let ScorecardItem::Scorecard(alice) = alice_r2 {
+            assert_eq!(alice.competitor.name, "Alice Smith");
+            assert_eq!(alice.round_number, 2);
+            assert_eq!(alice.station_number, Some(5));
+        } else {
+            panic!("Expected Scorecard");
+        }
 
         // 3. Planning 222-r2 explicitly (no assignments) produces blank scorecards:
         let plan_222_r2 =
             ScorecardPlanner::plan(&comp, &["222-r2"], false, &[], true, false).unwrap();
         assert!(!plan_222_r2.is_empty());
-        assert!(plan_222_r2[0].is_blank);
+        assert!(plan_222_r2[0].is_blank());
     }
 
     #[test]
@@ -613,35 +647,42 @@ mod tests {
         let cards_r1 = ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], true, false).unwrap();
         assert_eq!(cards_r1.len(), 1);
         let card1 = &cards_r1[0];
-        assert_eq!(card1.scorecard_number, 1);
-        assert_eq!(card1.competitor_name(), "Alice Smith");
-        assert_eq!(card1.station_number, Some(5));
-        assert_eq!(card1.stage_name, Some("Red Stage"));
-        assert_eq!(card1.group_number, 1);
-        assert!(!card1.is_blank);
-        assert!(!card1.is_cover_sheet);
-        assert_eq!(
-            card1.formatted_time_limit_info().as_deref(),
-            Some("Cutoff: < 45.00 (2 att)  |  Time limit: 10:00.00")
-        );
-        assert_eq!(
-            card1.time_limit_info.unwrap().cutoff_centiseconds,
-            WcaResult::new(4500)
-        );
-        assert_eq!(
-            card1.time_limit_info.unwrap().limit_centiseconds,
-            WcaResult::new(60000)
-        );
+        if let ScorecardItem::Scorecard(sc) = card1 {
+            assert_eq!(sc.number, 1);
+            assert_eq!(sc.competitor.name, "Alice Smith");
+            assert_eq!(sc.station_number, Some(5));
+            assert_eq!(sc.stage_name, Some("Red Stage"));
+            assert_eq!(sc.group_number, 1);
+            assert_eq!(
+                sc.formatted_time_limit_info().as_deref(),
+                Some("Cutoff: < 45.00 (2 att)  |  Time limit: 10:00.00")
+            );
+            assert_eq!(
+                sc.time_limit_info.as_ref().unwrap().cutoff_centiseconds,
+                WcaResult::new(4500)
+            );
+            assert_eq!(
+                sc.time_limit_info.as_ref().unwrap().limit_centiseconds,
+                WcaResult::new(60000)
+            );
+        } else {
+            panic!("Expected Scorecard");
+        }
+        assert!(!card1.is_blank());
+        assert!(!card1.is_cover_sheet());
 
         // Plan Round 2 (advancement blanks)
         let cards_r2 = ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false).unwrap();
         assert_eq!(cards_r2.len(), 1);
         let blank_card = &cards_r2[0];
-        assert_eq!(blank_card.scorecard_number, 1);
-        assert!(blank_card.is_blank);
-        assert!(!blank_card.is_cover_sheet);
-        assert_eq!(blank_card.competitor_name(), "");
-        assert_eq!(blank_card.station_number, None);
+        if let ScorecardItem::Blank(blank) = blank_card {
+            assert_eq!(blank.number, 1);
+            assert_eq!(blank.station_number, None);
+        } else {
+            panic!("Expected Blank");
+        }
+        assert!(blank_card.is_blank());
+        assert!(!blank_card.is_cover_sheet());
     }
 
     #[test]
@@ -759,38 +800,55 @@ mod tests {
 
         // Item 0 is Tier 1 (Round cover sheet)
         let cover_round = &plan_all[0];
-        assert!(cover_round.is_cover_sheet);
-        assert_eq!(cover_round.scorecard_number, 0);
-        assert_eq!(cover_round.group_number, 0);
-        assert_eq!(cover_round.stage_name, None);
-        assert_eq!(cover_round.total_group_cards, 2);
+        assert!(cover_round.is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = cover_round {
+            assert_eq!(cs.group_number, 0);
+            assert_eq!(cs.stage_name, None);
+            assert_eq!(cs.total_group_cards, 2);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // Item 1 is Tier 2 (Group cover sheet)
         let cover_group = &plan_all[1];
-        assert!(cover_group.is_cover_sheet);
-        assert_eq!(cover_group.scorecard_number, 0);
-        assert_eq!(cover_group.group_number, 1);
-        assert_eq!(cover_group.stage_name, None);
-        assert_eq!(cover_group.total_group_cards, 2);
+        assert!(cover_group.is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = cover_group {
+            assert_eq!(cs.group_number, 1);
+            assert_eq!(cs.stage_name, None);
+            assert_eq!(cs.total_group_cards, 2);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // Item 2 is Tier 3 (Stage cover sheet: per group on each stage)
         let cover_stage = &plan_all[2];
-        assert!(cover_stage.is_cover_sheet);
-        assert_eq!(cover_stage.scorecard_number, 0);
-        assert_eq!(cover_stage.group_number, 1);
-        assert_eq!(cover_stage.stage_name, Some("Main Hall"));
-        assert_eq!(cover_stage.total_group_cards, 2);
+        assert!(cover_stage.is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = cover_stage {
+            assert_eq!(cs.group_number, 1);
+            assert_eq!(cs.stage_name, Some("Main Hall"));
+            assert_eq!(cs.total_group_cards, 2);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // Item 3 and Item 4 are competitor cards
         let card1 = &plan_all[3];
-        assert!(!card1.is_cover_sheet);
-        assert_eq!(card1.scorecard_number, 1);
-        assert_eq!(card1.competitor_name(), "Alice Smith");
+        assert!(!card1.is_cover_sheet());
+        if let ScorecardItem::Scorecard(sc) = card1 {
+            assert_eq!(sc.number, 1);
+            assert_eq!(sc.competitor.name, "Alice Smith");
+        } else {
+            panic!("Expected Scorecard");
+        }
 
         let card2 = &plan_all[4];
-        assert!(!card2.is_cover_sheet);
-        assert_eq!(card2.scorecard_number, 2);
-        assert_eq!(card2.competitor_name(), "Bob Jones");
+        assert!(!card2.is_cover_sheet());
+        if let ScorecardItem::Scorecard(sc) = card2 {
+            assert_eq!(sc.number, 2);
+            assert_eq!(sc.competitor.name, "Bob Jones");
+        } else {
+            panic!("Expected Scorecard");
+        }
 
         // 2. When only Stage is enabled (default -c):
         let plan_stage = ScorecardPlanner::plan(
@@ -803,9 +861,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan_stage.len(), 3);
-        assert!(plan_stage[0].is_cover_sheet);
-        assert_eq!(plan_stage[0].group_number, 1);
-        assert_eq!(plan_stage[0].stage_name, Some("Main Hall"));
+        assert!(plan_stage[0].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan_stage[0] {
+            assert_eq!(cs.group_number, 1);
+            assert_eq!(cs.stage_name, Some("Main Hall"));
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 3. When only Group is enabled (-c g):
         let plan_g = ScorecardPlanner::plan(
@@ -818,9 +880,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan_g.len(), 3);
-        assert!(plan_g[0].is_cover_sheet);
-        assert_eq!(plan_g[0].group_number, 1);
-        assert_eq!(plan_g[0].stage_name, None);
+        assert!(plan_g[0].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan_g[0] {
+            assert_eq!(cs.group_number, 1);
+            assert_eq!(cs.stage_name, None);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 4. When only Round is enabled (-c r):
         let plan_r = ScorecardPlanner::plan(
@@ -833,9 +899,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan_r.len(), 3);
-        assert!(plan_r[0].is_cover_sheet);
-        assert_eq!(plan_r[0].group_number, 0);
-        assert_eq!(plan_r[0].stage_name, None);
+        assert!(plan_r[0].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan_r[0] {
+            assert_eq!(cs.group_number, 0);
+            assert_eq!(cs.stage_name, None);
+        } else {
+            panic!("Expected CoverSheet");
+        }
     }
 
     #[test]
@@ -997,55 +1067,91 @@ mod tests {
         assert_eq!(plan.len(), 9);
 
         // 0: Event cover sheet
-        assert!(plan[0].is_cover_sheet);
-        assert_eq!(plan[0].group_number, 0);
-        assert_eq!(plan[0].stage_name, None);
-        assert_eq!(plan[0].total_group_cards, 3);
+        assert!(plan[0].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan[0] {
+            assert_eq!(cs.group_number, 0);
+            assert_eq!(cs.stage_name, None);
+            assert_eq!(cs.total_group_cards, 3);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 1: Group 1 cover sheet
-        assert!(plan[1].is_cover_sheet);
-        assert_eq!(plan[1].group_number, 1);
-        assert_eq!(plan[1].stage_name, None);
-        assert_eq!(plan[1].total_group_cards, 2);
+        assert!(plan[1].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan[1] {
+            assert_eq!(cs.group_number, 1);
+            assert_eq!(cs.stage_name, None);
+            assert_eq!(cs.total_group_cards, 2);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 2: Group 1 Blue Stage cover sheet
-        assert!(plan[2].is_cover_sheet);
-        assert_eq!(plan[2].group_number, 1);
-        assert_eq!(plan[2].stage_name, Some("Blue Stage"));
-        assert_eq!(plan[2].total_group_cards, 1);
+        assert!(plan[2].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan[2] {
+            assert_eq!(cs.group_number, 1);
+            assert_eq!(cs.stage_name, Some("Blue Stage"));
+            assert_eq!(cs.total_group_cards, 1);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 3: Alice card
-        assert!(!plan[3].is_cover_sheet);
-        assert_eq!(plan[3].competitor_name(), "Alice Smith");
-        assert_eq!(plan[3].scorecard_number, 1);
+        assert!(!plan[3].is_cover_sheet());
+        if let ScorecardItem::Scorecard(sc) = &plan[3] {
+            assert_eq!(sc.competitor.name, "Alice Smith");
+            assert_eq!(sc.number, 1);
+        } else {
+            panic!("Expected Scorecard");
+        }
 
         // 4: Group 1 Red Stage cover sheet
-        assert!(plan[4].is_cover_sheet);
-        assert_eq!(plan[4].group_number, 1);
-        assert_eq!(plan[4].stage_name, Some("Red Stage"));
-        assert_eq!(plan[4].total_group_cards, 1);
+        assert!(plan[4].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan[4] {
+            assert_eq!(cs.group_number, 1);
+            assert_eq!(cs.stage_name, Some("Red Stage"));
+            assert_eq!(cs.total_group_cards, 1);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 5: Bob card
-        assert!(!plan[5].is_cover_sheet);
-        assert_eq!(plan[5].competitor_name(), "Bob Jones");
-        assert_eq!(plan[5].scorecard_number, 2);
+        assert!(!plan[5].is_cover_sheet());
+        if let ScorecardItem::Scorecard(sc) = &plan[5] {
+            assert_eq!(sc.competitor.name, "Bob Jones");
+            assert_eq!(sc.number, 2);
+        } else {
+            panic!("Expected Scorecard");
+        }
 
         // 6: Group 2 cover sheet
-        assert!(plan[6].is_cover_sheet);
-        assert_eq!(plan[6].group_number, 2);
-        assert_eq!(plan[6].stage_name, None);
-        assert_eq!(plan[6].total_group_cards, 1);
+        assert!(plan[6].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan[6] {
+            assert_eq!(cs.group_number, 2);
+            assert_eq!(cs.stage_name, None);
+            assert_eq!(cs.total_group_cards, 1);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 7: Group 2 Red Stage cover sheet
-        assert!(plan[7].is_cover_sheet);
-        assert_eq!(plan[7].group_number, 2);
-        assert_eq!(plan[7].stage_name, Some("Red Stage"));
-        assert_eq!(plan[7].total_group_cards, 1);
+        assert!(plan[7].is_cover_sheet());
+        if let ScorecardItem::CoverSheet(cs) = &plan[7] {
+            assert_eq!(cs.group_number, 2);
+            assert_eq!(cs.stage_name, Some("Red Stage"));
+            assert_eq!(cs.total_group_cards, 1);
+        } else {
+            panic!("Expected CoverSheet");
+        }
 
         // 8: Charlie card
-        assert!(!plan[8].is_cover_sheet);
-        assert_eq!(plan[8].competitor_name(), "Charlie Brown");
-        assert_eq!(plan[8].scorecard_number, 3);
+        assert!(!plan[8].is_cover_sheet());
+        if let ScorecardItem::Scorecard(sc) = &plan[8] {
+            assert_eq!(sc.competitor.name, "Charlie Brown");
+            assert_eq!(sc.number, 3);
+        } else {
+            panic!("Expected Scorecard");
+        }
     }
 
     #[test]

@@ -27,46 +27,28 @@ mod tests {
         };
 
         let cards = vec![
-            ScorecardItem {
-                scorecard_number: 1,
-                station_number: Some(1),
-                competition_name: "Test Comp",
-                event: WcaEvent::E333,
-                round_number: 1,
-                group_number: 1,
-                stage_name: Some("Main Stage"),
-                competitor: Some(Competitor {
+            ScorecardItem::scorecard(
+                "Test Comp",
+                WcaEvent::E333,
+                1,
+                1,
+                Some("Main Stage"),
+                Competitor {
                     name: "Alice Smith",
                     local_name: None,
                     registrant_id: NonZeroUsize::MIN,
                     wca_id: WcaId::parse("2022SMIT01"),
-                }),
-                attempt_count: 5,
-                time_limit_info: Some(TimeLimitInfo {
+                },
+                Some(1),
+                5,
+                Some(TimeLimitInfo {
                     limit_centiseconds: WcaResult::new(60000),
                     is_cumulative: false,
                     cutoff_centiseconds: None,
                     cutoff_attempts: 0,
                 }),
-                is_blank: false,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
-            ScorecardItem {
-                scorecard_number: 2,
-                station_number: None,
-                competition_name: "Test Comp",
-                event: WcaEvent::E333,
-                round_number: 2,
-                group_number: 1,
-                stage_name: None,
-                competitor: None,
-                attempt_count: 5,
-                time_limit_info: None,
-                is_blank: true,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
+            ),
+            ScorecardItem::blank("Test Comp", WcaEvent::E333, 2, 1, None, 5, None),
         ];
 
         let gen_a4 = PdfGenerator::new(PageLayout::new(layout::PaperSize::A4));

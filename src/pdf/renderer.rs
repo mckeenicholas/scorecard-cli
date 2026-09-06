@@ -1,5 +1,7 @@
 use crate::pdf::layout::RectSpec;
-use crate::scorecard::{ScorecardItem, TimeLimitInfo};
+use crate::scorecard::{
+    BlankScorecard, Competitor, CoverSheet, Scorecard, ScorecardItem, TimeLimitInfo,
+};
 use printpdf::FontId;
 use printpdf::color::{Color, Greyscale};
 use printpdf::font::BuiltinFont;
@@ -298,12 +300,12 @@ impl<'a> CardPainter<'a> {
     }
 
     /// Draws the top header: scorecard number in top-left corner and competition name centered.
-    pub fn draw_top_header(&mut self, scorecard_number: usize, comp_name: &str) {
+    pub fn draw_top_header(&mut self, number: usize, comp_name: &str) {
         self.advance_y(12.0);
 
-        if scorecard_number > 0 {
+        if number > 0 {
             let mut num_buf = itoa::Buffer::new();
-            let num_str = num_buf.format(scorecard_number);
+            let num_str = num_buf.format(number);
             TextDrawer::draw(
                 self.ops,
                 TextSpec {
@@ -348,14 +350,20 @@ impl<'a> CardPainter<'a> {
 
     /// Draws the event, round, group, and station info grid table.
     /// If there is no station number (or station numbers are disabled), renders a 3-column table.
-    pub fn draw_event_info_table(&mut self, card: &ScorecardItem<'_>) {
+    pub fn draw_event_info_table(
+        &mut self,
+        event_name: &str,
+        round_number: usize,
+        group_number: usize,
+        station_number: Option<usize>,
+    ) {
         let mut round_buf = itoa::Buffer::new();
-        let round_str = round_buf.format(card.round_number);
+        let round_str = round_buf.format(round_number);
 
         let mut group_buf = itoa::Buffer::new();
-        let group_str = group_buf.format(card.group_number);
+        let group_str = group_buf.format(group_number);
 
-        if let Some(station) = card.station_number {
+        if let Some(station) = station_number {
             let mut station_buf = itoa::Buffer::new();
             let station_val = station_buf.format(station);
             self.draw_grid_table(
@@ -367,7 +375,7 @@ impl<'a> CardPainter<'a> {
                     ColumnDef::new("Group", 0.20, TextAlign::Center),
                     ColumnDef::new("Station", 0.22, TextAlign::Center),
                 ],
-                &[&[card.event_name(), round_str, group_str, station_val]],
+                &[&[event_name, round_str, group_str, station_val]],
             );
         } else {
             self.draw_grid_table(
@@ -378,61 +386,54 @@ impl<'a> CardPainter<'a> {
                     ColumnDef::new("Round", 0.25, TextAlign::Center),
                     ColumnDef::new("Group", 0.25, TextAlign::Center),
                 ],
-                &[&[card.event_name(), round_str, group_str]],
+                &[&[event_name, round_str, group_str]],
             );
         }
     }
 
-    /// Draws the competitor ID, name, and WCA ID grid table.
+    /// Draws the competitor ID, name, and WCA ID grid table for an assigned competitor.
     /// The competitor name is rendered in bold.
-    /// For blank scorecards, WCA ID is omitted and ID is empty to maximize space for writing the competitor's name.
-    pub fn draw_competitor_info_table(&mut self, card: &ScorecardItem<'_>) {
+    pub fn draw_competitor_info_table(&mut self, competitor: &Competitor<'_>) {
         self.advance_y(5.0);
         let mut id_buf = itoa::Buffer::new();
+        let id_val = id_buf.format(competitor.registrant_id.get());
+        let wca_id_val = competitor.display_wca_id();
 
-        let (col_defs, id_val, wca_id_val, name_ratio, name_x_offset) = match card.competitor {
-            None => (
-                &[
-                    ColumnDef::new("ID", 0.16, TextAlign::Center),
-                    ColumnDef::bold("Competitor Name", 0.84, TextAlign::Left),
-                ][..],
-                "",
-                None,
-                0.84,
-                0.16 * self.inner_w,
-            ),
-            Some(ref comp) => {
-                let id_val = id_buf.format(comp.registrant_id.get());
-                let wca_id_val = comp.display_wca_id();
-                (
-                    &[
-                        ColumnDef::new("ID", 0.16, TextAlign::Center),
-                        ColumnDef::bold("Competitor Name", 0.54, TextAlign::Left),
-                        ColumnDef::new("WCA ID", 0.30, TextAlign::Center),
-                    ][..],
-                    id_val,
-                    Some(wca_id_val),
-                    0.54,
-                    0.16 * self.inner_w,
-                )
-            }
-        };
+        let col_defs = &[
+            ColumnDef::new("ID", 0.16, TextAlign::Center),
+            ColumnDef::bold("Competitor Name", 0.54, TextAlign::Left),
+            ColumnDef::new("WCA ID", 0.30, TextAlign::Center),
+        ][..];
 
-        let rows: &[&[&str]] = match wca_id_val {
-            Some(wca) => &[&[id_val, "", wca]],
-            None => &[&[id_val, ""]],
-        };
-
+        let rows: &[&[&str]] = &[&[id_val, "", wca_id_val]];
         let row_top = self.cur_y - 14.5;
         self.draw_grid_table(14.5, 20.0, col_defs, rows);
 
-        if let Some(ref comp) = card.competitor
-            && (!comp.name.is_empty() || comp.local_name.is_some())
-        {
-            let cell_x = self.inner_x + name_x_offset;
-            let cell_w = name_ratio * self.inner_w;
-            self.draw_competitor_name(comp.name, comp.local_name, cell_x, row_top, cell_w, 20.0);
+        if !competitor.name.is_empty() || competitor.local_name.is_some() {
+            let cell_x = self.inner_x + 0.16 * self.inner_w;
+            let cell_w = 0.54 * self.inner_w;
+            self.draw_competitor_name(
+                competitor.name,
+                competitor.local_name,
+                cell_x,
+                row_top,
+                cell_w,
+                20.0,
+            );
         }
+    }
+
+    /// Draws the blank competitor ID and name table for blank scorecards.
+    /// WCA ID is omitted and ID is empty to maximize space for writing the competitor's name.
+    pub fn draw_blank_competitor_info_table(&mut self) {
+        self.advance_y(5.0);
+        let col_defs = &[
+            ColumnDef::new("ID", 0.16, TextAlign::Center),
+            ColumnDef::bold("Competitor Name", 0.84, TextAlign::Left),
+        ][..];
+
+        let rows: &[&[&str]] = &[&["", ""]];
+        self.draw_grid_table(14.5, 20.0, col_defs, rows);
     }
 
     fn draw_competitor_name(
@@ -715,23 +716,42 @@ impl<'a> CardPainter<'a> {
     }
 
     /// Draws a complete competitor scorecard.
-    pub fn draw_competitor_card(&mut self, card: &ScorecardItem<'_>) {
+    pub fn draw_scorecard(&mut self, card: &Scorecard<'_>) {
         self.draw_outer_border();
-        self.draw_top_header(card.scorecard_number, &card.truncated_competition_name(30));
-        self.draw_event_info_table(card);
-        self.draw_competitor_info_table(card);
+        self.draw_top_header(card.number, &card.truncated_competition_name(30));
+        self.draw_event_info_table(
+            card.event_name(),
+            card.round_number,
+            card.group_number,
+            card.station_number,
+        );
+        self.draw_competitor_info_table(&card.competitor);
+        self.draw_attempt_table(card.attempt_count, card.time_limit_info);
+    }
+
+    /// Draws a blank scorecard for subsequent rounds.
+    pub fn draw_blank_scorecard(&mut self, card: &BlankScorecard<'_>) {
+        self.draw_outer_border();
+        self.draw_top_header(card.number, &card.truncated_competition_name(30));
+        self.draw_event_info_table(
+            card.event_name(),
+            card.round_number,
+            card.group_number,
+            card.station_number,
+        );
+        self.draw_blank_competitor_info_table();
         self.draw_attempt_table(card.attempt_count, card.time_limit_info);
     }
 
     /// Draws a complete cover sheet for a group with competition info, checkboxes, and signature fields.
-    pub fn draw_cover_sheet(&mut self, card: &ScorecardItem<'_>) {
+    pub fn draw_cover_sheet(&mut self, card: &CoverSheet<'_>) {
         self.draw_outer_border();
         self.draw_cover_sheet_header(card);
         self.draw_delegate_section(card.total_group_cards);
         self.draw_data_entry_section();
     }
 
-    fn draw_cover_sheet_header(&mut self, card: &ScorecardItem<'_>) {
+    fn draw_cover_sheet_header(&mut self, card: &CoverSheet<'_>) {
         self.advance_y(6.0);
         self.draw_full_width(card.competition_name, self.cur_y, 11.5, true);
 
@@ -823,10 +843,11 @@ impl ScorecardRenderer {
     ) {
         let theme = DEFAULT_THEME.with_font(custom_font.cloned());
         let mut painter = CardPainter::new(ops, bounds, &theme);
-        if card.is_cover_sheet {
-            painter.draw_cover_sheet(card);
-        } else {
-            painter.draw_competitor_card(card);
+        match card {
+            ScorecardItem::Empty => {}
+            ScorecardItem::CoverSheet(cover) => painter.draw_cover_sheet(cover),
+            ScorecardItem::Scorecard(scorecard) => painter.draw_scorecard(scorecard),
+            ScorecardItem::Blank(blank) => painter.draw_blank_scorecard(blank),
         }
     }
 }
@@ -1322,31 +1343,27 @@ mod tests {
 
     #[test]
     fn test_draw_card_operations() {
-        let card = ScorecardItem {
-            scorecard_number: 1,
-            station_number: Some(4),
-            competition_name: "Test Comp 2026",
-            event: WcaEvent::E333,
-            round_number: 1,
-            group_number: 1,
-            stage_name: Some("Red Stage"),
-            competitor: Some(Competitor {
+        let card = ScorecardItem::scorecard(
+            "Test Comp 2026",
+            WcaEvent::E333,
+            1,
+            1,
+            Some("Red Stage"),
+            Competitor {
                 name: "Alice Smith",
                 local_name: None,
                 registrant_id: std::num::NonZeroUsize::MIN,
                 wca_id: WcaId::parse("2022SMIT01"),
-            }),
-            attempt_count: 5,
-            time_limit_info: Some(TimeLimitInfo {
+            },
+            Some(4),
+            5,
+            Some(TimeLimitInfo {
                 limit_centiseconds: WcaResult::new(60000),
                 is_cumulative: false,
                 cutoff_centiseconds: None,
                 cutoff_attempts: 0,
             }),
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        };
+        );
 
         let mut ops = Vec::new();
         ScorecardRenderer::draw_card(
@@ -1379,22 +1396,31 @@ mod tests {
     }
 
     #[test]
+    fn test_draw_empty_space_produces_no_ops() {
+        let empty = ScorecardItem::empty_space();
+        let mut ops = Vec::new();
+        ScorecardRenderer::draw_card(
+            &mut ops,
+            &empty,
+            RectSpec::new(0.0, 0.0, 100.0, 100.0),
+            None,
+        );
+        assert!(
+            ops.is_empty(),
+            "Empty space item should generate zero drawing operations"
+        );
+    }
+
+    #[test]
     fn test_draw_cover_sheet_operations() {
-        let cover_card = ScorecardItem {
-            scorecard_number: 0,
-            station_number: None,
-            competition_name: "Ocean State Cubikon 2025",
-            event: WcaEvent::E333,
-            round_number: 1,
-            group_number: 1,
-            stage_name: Some("Main Hall"),
-            competitor: None,
-            attempt_count: 5,
-            time_limit_info: None,
-            is_blank: false,
-            is_cover_sheet: true,
-            total_group_cards: 15,
-        };
+        let cover_card = ScorecardItem::cover_sheet(
+            "Ocean State Cubikon 2025",
+            WcaEvent::E333,
+            1,
+            1,
+            Some("Main Hall"),
+            15,
+        );
 
         let mut ops = Vec::new();
         ScorecardRenderer::draw_card(
@@ -1423,21 +1449,17 @@ mod tests {
 
     #[test]
     fn test_event_info_table_3_cols_without_station() {
-        let card_no_station = ScorecardItem {
-            scorecard_number: 1,
-            station_number: None,
-            competition_name: "Test Comp 2026",
-            event: WcaEvent::E333,
-            round_number: 1,
-            group_number: 1,
-            stage_name: None,
-            competitor: Some(Competitor::simple("Alice Smith")),
-            attempt_count: 5,
-            time_limit_info: None,
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        };
+        let card_no_station = ScorecardItem::scorecard(
+            "Test Comp 2026",
+            WcaEvent::E333,
+            1,
+            1,
+            None,
+            Competitor::simple("Alice Smith"),
+            None,
+            5,
+            None,
+        );
 
         let mut ops_no_station = Vec::new();
         ScorecardRenderer::draw_card(
@@ -1458,10 +1480,17 @@ mod tests {
             "Expected no 'Station' header when station_number is None"
         );
 
-        let card_with_station = ScorecardItem {
-            station_number: Some(3),
-            ..card_no_station
-        };
+        let card_with_station = ScorecardItem::scorecard(
+            "Test Comp 2026",
+            WcaEvent::E333,
+            1,
+            1,
+            None,
+            Competitor::simple("Alice Smith"),
+            Some(3),
+            5,
+            None,
+        );
         let mut ops_with_station = Vec::new();
         ScorecardRenderer::draw_card(
             &mut ops_with_station,
@@ -1484,26 +1513,22 @@ mod tests {
 
     #[test]
     fn test_attempt_table_cutoff_and_extra_banners() {
-        let card = ScorecardItem {
-            scorecard_number: 1,
-            station_number: None,
-            competition_name: "Test Comp 2026",
-            event: WcaEvent::E333,
-            round_number: 1,
-            group_number: 1,
-            stage_name: None,
-            competitor: Some(Competitor::simple("Alice Smith")),
-            attempt_count: 5,
-            time_limit_info: Some(TimeLimitInfo {
+        let card = ScorecardItem::scorecard(
+            "Test Comp 2026",
+            WcaEvent::E333,
+            1,
+            1,
+            None,
+            Competitor::simple("Alice Smith"),
+            None,
+            5,
+            Some(TimeLimitInfo {
                 limit_centiseconds: WcaResult::new(60000),
                 is_cumulative: false,
                 cutoff_centiseconds: WcaResult::new(4500),
                 cutoff_attempts: 2,
             }),
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        };
+        );
 
         let mut ops = Vec::new();
         ScorecardRenderer::draw_card(
@@ -1557,21 +1582,8 @@ mod tests {
 
     #[test]
     fn test_draw_blank_card_omits_wca_id_and_id_hyphen() {
-        let blank_card = ScorecardItem {
-            scorecard_number: 1,
-            station_number: None,
-            competition_name: "Test Comp 2026",
-            event: WcaEvent::E333,
-            round_number: 2,
-            group_number: 1,
-            stage_name: None,
-            competitor: None,
-            attempt_count: 5,
-            time_limit_info: None,
-            is_blank: true,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        };
+        let blank_card =
+            ScorecardItem::blank("Test Comp 2026", WcaEvent::E333, 2, 1, None, 5, None);
 
         let mut ops = Vec::new();
         ScorecardRenderer::draw_card(

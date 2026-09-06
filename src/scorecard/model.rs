@@ -277,61 +277,161 @@ impl<'a> Competitor<'a> {
     }
 }
 
-/// `ScorecardItem` contains the data needed to render a single scorecard without heap allocations.
+/// Helper to truncate competition name to `max_chars` with an ellipsis if necessary.
+pub fn truncate_comp_name(name: &str, max_chars: usize) -> Cow<'_, str> {
+    if name.chars().count() > max_chars {
+        let mut s = String::with_capacity(max_chars);
+        s.extend(name.chars().take(max_chars.saturating_sub(3)));
+        s.push_str("...");
+        Cow::Owned(s)
+    } else {
+        Cow::Borrowed(name)
+    }
+}
+
+/// Scorecard containing all details for an assigned competitor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScorecardItem<'a> {
-    pub scorecard_number: usize,
+pub struct Scorecard<'a> {
+    pub number: usize,
     pub station_number: Option<usize>,
     pub competition_name: &'a str,
     pub event: WcaEvent,
     pub round_number: usize,
     pub group_number: usize,
     pub stage_name: Option<&'a str>,
-    pub competitor: Option<Competitor<'a>>,
+    pub competitor: Competitor<'a>,
     pub attempt_count: usize,
     pub time_limit_info: Option<TimeLimitInfo>,
-    pub is_blank: bool,
-    pub is_cover_sheet: bool,
+}
+
+impl Scorecard<'_> {
+    #[must_use]
+    pub const fn event_id(&self) -> &'static str {
+        self.event.code()
+    }
+
+    #[must_use]
+    pub const fn event_name(&self) -> &'static str {
+        self.event.display_name()
+    }
+
+    pub fn truncated_competition_name(&self, max_chars: usize) -> Cow<'_, str> {
+        truncate_comp_name(self.competition_name, max_chars)
+    }
+
+    pub fn formatted_time_limit_info(&self) -> Option<String> {
+        self.time_limit_info.map(|info| info.format_display())
+    }
+}
+
+/// Blank scorecard printed for subsequent rounds or manual scorekeeping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlankScorecard<'a> {
+    pub number: usize,
+    pub station_number: Option<usize>,
+    pub competition_name: &'a str,
+    pub event: WcaEvent,
+    pub round_number: usize,
+    pub group_number: usize,
+    pub stage_name: Option<&'a str>,
+    pub attempt_count: usize,
+    pub time_limit_info: Option<TimeLimitInfo>,
+}
+
+impl BlankScorecard<'_> {
+    #[must_use]
+    pub const fn event_id(&self) -> &'static str {
+        self.event.code()
+    }
+
+    #[must_use]
+    pub const fn event_name(&self) -> &'static str {
+        self.event.display_name()
+    }
+
+    pub fn truncated_competition_name(&self, max_chars: usize) -> Cow<'_, str> {
+        truncate_comp_name(self.competition_name, max_chars)
+    }
+
+    pub fn formatted_time_limit_info(&self) -> Option<String> {
+        self.time_limit_info.map(|info| info.format_display())
+    }
+}
+
+/// Cover sheet preceding scorecards for a round, group, or stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CoverSheet<'a> {
+    pub competition_name: &'a str,
+    pub event: WcaEvent,
+    pub round_number: usize,
+    pub group_number: usize,
+    pub stage_name: Option<&'a str>,
     pub total_group_cards: usize,
 }
 
+impl CoverSheet<'_> {
+    #[must_use]
+    pub const fn event_id(&self) -> &'static str {
+        self.event.code()
+    }
+
+    #[must_use]
+    pub const fn event_name(&self) -> &'static str {
+        self.event.display_name()
+    }
+
+    pub fn truncated_competition_name(&self, max_chars: usize) -> Cow<'_, str> {
+        truncate_comp_name(self.competition_name, max_chars)
+    }
+}
+
+/// `ScorecardItem` contains either a competitor scorecard, blank scorecard, cover sheet, or an empty padding space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScorecardItem<'a> {
+    Scorecard(Scorecard<'a>),
+    Blank(BlankScorecard<'a>),
+    CoverSheet(CoverSheet<'a>),
+    #[default]
+    Empty,
+}
+
 #[cfg(test)]
-impl Default for ScorecardItem<'static> {
+impl Default for Scorecard<'static> {
     fn default() -> Self {
         Self {
-            scorecard_number: 1,
+            number: 1,
             station_number: Some(1),
             competition_name: "Test Comp",
             event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: Some("Main Stage"),
-            competitor: Some(Competitor::simple("Alice")),
+            competitor: Competitor::simple("Alice"),
             attempt_count: 5,
             time_limit_info: None,
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
         }
     }
 }
 
 impl<'a> ScorecardItem<'a> {
-    /// Returns the standard WCA event ID string (e.g. `"333"`).
     #[must_use]
-    pub const fn event_id(&self) -> &'static str {
-        self.event.code()
+    pub const fn is_cover_sheet(&self) -> bool {
+        matches!(self, Self::CoverSheet(_))
     }
 
-    /// Returns the user-friendly display name of the event (e.g. `"3x3x3 Cube"`).
     #[must_use]
-    pub const fn event_name(&self) -> &'static str {
-        self.event.display_name()
+    pub const fn is_blank(&self) -> bool {
+        matches!(self, Self::Blank(_))
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
     }
 
     /// Creates a competitor scorecard item for an open round.
     #[allow(clippy::too_many_arguments)]
-    pub fn competitor(
+    pub fn scorecard(
         competition_name: &'a str,
         event: WcaEvent,
         round_number: usize,
@@ -342,53 +442,40 @@ impl<'a> ScorecardItem<'a> {
         attempt_count: usize,
         time_limit_info: Option<TimeLimitInfo>,
     ) -> Self {
-        Self {
-            scorecard_number: 0,
+        Self::Scorecard(Scorecard {
+            number: 0,
             station_number,
             competition_name,
             event,
             round_number,
             group_number,
             stage_name,
-            competitor: Some(competitor),
+            competitor,
             attempt_count,
             time_limit_info,
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        }
+        })
     }
 
     /// Creates a cover sheet item to precede a group's scorecards.
-    #[allow(clippy::too_many_arguments)]
     pub fn cover_sheet(
         competition_name: &'a str,
         event: WcaEvent,
         round_number: usize,
         group_number: usize,
         stage_name: Option<&'a str>,
-        attempt_count: usize,
         total_group_cards: usize,
     ) -> Self {
-        Self {
-            scorecard_number: 0,
-            station_number: None,
+        Self::CoverSheet(CoverSheet {
             competition_name,
             event,
             round_number,
             group_number,
             stage_name,
-            competitor: None,
-            attempt_count,
-            time_limit_info: None,
-            is_blank: false,
-            is_cover_sheet: true,
             total_group_cards,
-        }
+        })
     }
 
     /// Creates a blank scorecard item for a subsequent round.
-    #[allow(clippy::too_many_arguments)]
     pub fn blank(
         competition_name: &'a str,
         event: WcaEvent,
@@ -398,63 +485,23 @@ impl<'a> ScorecardItem<'a> {
         attempt_count: usize,
         time_limit_info: Option<TimeLimitInfo>,
     ) -> Self {
-        Self {
-            scorecard_number: 0,
+        Self::Blank(BlankScorecard {
+            number: 0,
             station_number: None,
             competition_name,
             event,
             round_number,
             group_number,
             stage_name,
-            competitor: None,
             attempt_count,
             time_limit_info,
-            is_blank: true,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        }
+        })
     }
 
-    /// Returns the primary competitor name string.
-    pub fn competitor_name(&self) -> &str {
-        self.competitor.map_or("", |c| c.name)
-    }
-
-    /// Returns formatted competitor name pair: `(primary_name, Option<local_name>)`.
-    pub fn display_competitor_name(&self) -> (&str, Option<&str>) {
-        self.competitor
-            .map_or(("", None), |c| (c.name, c.local_name))
-    }
-
-    /// Returns WCA ID string or empty string if none.
-    pub fn display_wca_id(&self) -> &str {
-        self.competitor.as_ref().map_or("", |c| c.display_wca_id())
-    }
-
-    /// Returns registrant ID if present.
-    pub fn registrant_id(&self) -> Option<NonZeroUsize> {
-        self.competitor.map(|c| c.registrant_id)
-    }
-
-    /// Returns truncated competition name if exceeding `max_chars`.
-    pub fn truncated_competition_name(&self, max_chars: usize) -> Cow<'_, str> {
-        if self.competition_name.chars().count() > max_chars {
-            let mut s = String::with_capacity(max_chars);
-            s.extend(
-                self.competition_name
-                    .chars()
-                    .take(max_chars.saturating_sub(3)),
-            );
-            s.push_str("...");
-            Cow::Owned(s)
-        } else {
-            Cow::Borrowed(self.competition_name)
-        }
-    }
-
-    /// Returns formatted time limit and cutoff info if present.
-    pub fn formatted_time_limit_info(&self) -> Option<String> {
-        self.time_limit_info.map(|info| info.format_display())
+    /// Creates an empty space item used to pad page grids so that groups start on a new page.
+    #[must_use]
+    pub const fn empty_space() -> Self {
+        Self::Empty
     }
 }
 
@@ -546,14 +593,19 @@ impl ScorecardPlan<'_> {
         self.items.len()
     }
 
-    pub fn assign_scorecard_numbers(&mut self) {
+    pub fn assign_numbers(&mut self) {
         let mut num = 1;
         for card in &mut self.items {
-            if card.is_cover_sheet {
-                card.scorecard_number = 0;
-            } else {
-                card.scorecard_number = num;
-                num += 1;
+            match card {
+                ScorecardItem::Scorecard(sc) => {
+                    sc.number = num;
+                    num += 1;
+                }
+                ScorecardItem::Blank(b) => {
+                    b.number = num;
+                    num += 1;
+                }
+                ScorecardItem::CoverSheet(_) | ScorecardItem::Empty => {}
             }
         }
     }

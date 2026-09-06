@@ -27,10 +27,10 @@ pub enum WcifLoadError {
         source: std::io::Error,
     },
     Json(serde_json::Error),
-    Http(reqwest::Error),
+    Http(ureq::Error),
     NotFound(String),
     ApiStatus {
-        status: reqwest::StatusCode,
+        status: u16,
         comp_id: String,
     },
 }
@@ -76,8 +76,8 @@ impl From<serde_json::Error> for WcifLoadError {
     }
 }
 
-impl From<reqwest::Error> for WcifLoadError {
-    fn from(err: reqwest::Error) -> Self {
+impl From<ureq::Error> for WcifLoadError {
+    fn from(err: ureq::Error) -> Self {
         WcifLoadError::Http(err)
     }
 }
@@ -124,17 +124,19 @@ impl WcifLoader {
             "https://www.worldcubeassociation.org/api/v0/competitions/{comp_id}/wcif/public"
         );
 
-        let client = reqwest::blocking::Client::builder()
+        let agent: ureq::Agent = ureq::config::Config::builder()
             .user_agent("fast-scorecard-gen/0.1.0 (https://github.com/mckeenicholas/scorecard-cli)")
-            .build()?;
+            .http_status_as_error(false)
+            .build()
+            .into();
 
-        let resp = client.get(&api_url).send()?;
+        let mut resp = agent.get(&api_url).call()?;
 
-        let status = resp.status();
-        if status == reqwest::StatusCode::NOT_FOUND {
+        let status = resp.status().as_u16();
+        if status == 404 {
             return Err(WcifLoadError::NotFound(comp_id.to_string()));
         }
-        if !status.is_success() {
+        if !resp.status().is_success() {
             return Err(WcifLoadError::ApiStatus {
                 status,
                 comp_id: comp_id.to_string(),
@@ -143,8 +145,7 @@ impl WcifLoader {
 
         spinner.set_message(format!("Downloading and parsing WCIF for '{comp_id}'..."));
 
-        let bytes = resp.bytes()?;
-
-        Ok(bytes.to_vec())
+        let bytes = resp.body_mut().read_to_vec()?;
+        Ok(bytes)
     }
 }

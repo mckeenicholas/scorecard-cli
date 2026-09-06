@@ -75,22 +75,35 @@ fn build_split_key(
     has_event: bool,
     has_group: bool,
 ) -> SplitKey {
+    let (stage_name, event, round_number, group_number) = match card {
+        ScorecardItem::Scorecard(sc) => (
+            sc.stage_name,
+            Some(sc.event),
+            sc.round_number,
+            sc.group_number,
+        ),
+        ScorecardItem::Blank(b) => (b.stage_name, Some(b.event), b.round_number, b.group_number),
+        ScorecardItem::CoverSheet(cs) => (
+            cs.stage_name,
+            Some(cs.event),
+            cs.round_number,
+            cs.group_number,
+        ),
+        ScorecardItem::Empty => (None, None, 0, 0),
+    };
+
     SplitKey {
         stage: if has_stage {
-            Some(slugify(card.stage_name.unwrap_or("no-stage")))
+            Some(slugify(stage_name.unwrap_or("no-stage")))
         } else {
             None
         },
-        event: if has_event {
-            Some((card.event, card.round_number))
+        event: if has_event && let Some(ev) = event {
+            Some((ev, round_number))
         } else {
             None
         },
-        group: if has_group {
-            Some(card.group_number)
-        } else {
-            None
-        },
+        group: if has_group { Some(group_number) } else { None },
     }
 }
 
@@ -304,21 +317,25 @@ fn validate_card_bundle_placement(
 
     for (filename, partition_cards) in partitions {
         for card in partition_cards.as_ref() {
-            if card.is_cover_sheet {
-                continue;
-            }
+            let (stage_name, event, round_number, group_number) = match card {
+                ScorecardItem::Scorecard(sc) => {
+                    (sc.stage_name, sc.event, sc.round_number, sc.group_number)
+                }
+                ScorecardItem::Blank(b) => (b.stage_name, b.event, b.round_number, b.group_number),
+                ScorecardItem::CoverSheet(_) | ScorecardItem::Empty => continue,
+            };
             let bundle_key = BundleKey {
-                stage_name: card.stage_name,
-                event: card.event,
-                round_number: card.round_number,
-                group_number: card.group_number,
+                stage_name,
+                event,
+                round_number,
+                group_number,
             };
             if let Some(existing_file) = bundle_partition_map.get(&bundle_key) {
                 if *existing_file != filename.as_str() {
                     return Err(SplitError::SplitBundle {
-                        event_id: card.event.code().to_string(),
-                        round_number: card.round_number,
-                        group_number: card.group_number,
+                        event_id: event.code().to_string(),
+                        round_number,
+                        group_number,
                         first_file: existing_file.to_string(),
                         second_file: filename.clone(),
                     });
@@ -354,7 +371,8 @@ fn write_and_report_partition(
 ) -> Result<usize, AppError> {
     let page_count = write_pdf_file(generator, comp, out_filename, partition_cards)?;
     let icon = "✔".green();
-    let scorecards_word = if partition_cards.len() == 1 {
+    let real_card_count = partition_cards.iter().filter(|c| !c.is_empty()).count();
+    let scorecards_word = if real_card_count == 1 {
         "scorecard"
     } else {
         "scorecards"
@@ -364,7 +382,7 @@ fn write_and_report_partition(
         println!(
             "  {icon} Generated {} ({} {}, {} {})",
             out_filename.cyan(),
-            partition_cards.len(),
+            real_card_count,
             scorecards_word,
             page_count,
             pages_word
@@ -373,7 +391,7 @@ fn write_and_report_partition(
         println!(
             "{icon} Successfully generated scorecards PDF: {} ({} {}, {} {})",
             out_filename.cyan(),
-            partition_cards.len(),
+            real_card_count,
             scorecards_word,
             page_count,
             pages_word
@@ -388,7 +406,12 @@ fn generate_partitioned_pdfs(
     options: &ResolvedOptions,
 ) -> Result<(), AppError> {
     let layout = PageLayout::new(options.paper);
-    let generator = PdfGenerator::with_font_path(layout, options.format, options.font.clone());
+    let generator = PdfGenerator::with_options(
+        layout,
+        options.format,
+        options.start_group_on_new_page,
+        options.font.clone(),
+    );
     let partitions = partition_scorecards(&comp.id, cards, &options.split);
     validate_split_compatibility(&partitions, options)?;
     let is_multi = partitions.len() > 1;
@@ -493,46 +516,38 @@ mod tests {
     #[test]
     fn test_partition_scorecards_none() {
         let cards = vec![
-            ScorecardItem {
-                scorecard_number: 1,
-                station_number: Some(1),
-                competition_name: "Comp",
-                event: WcaEvent::E333,
-                round_number: 1,
-                group_number: 1,
-                stage_name: Some("Red Stage"),
-                competitor: Some(Competitor {
+            ScorecardItem::scorecard(
+                "Comp",
+                WcaEvent::E333,
+                1,
+                1,
+                Some("Red Stage"),
+                Competitor {
                     name: "Alice",
                     local_name: None,
                     registrant_id: ID1,
                     wca_id: None,
-                }),
-                attempt_count: 5,
-                time_limit_info: None,
-                is_blank: false,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
-            ScorecardItem {
-                scorecard_number: 2,
-                station_number: Some(2),
-                competition_name: "Comp",
-                event: WcaEvent::E222,
-                round_number: 1,
-                group_number: 2,
-                stage_name: Some("Blue Stage"),
-                competitor: Some(Competitor {
+                },
+                Some(1),
+                5,
+                None,
+            ),
+            ScorecardItem::scorecard(
+                "Comp",
+                WcaEvent::E222,
+                1,
+                2,
+                Some("Blue Stage"),
+                Competitor {
                     name: "Bob",
                     local_name: None,
                     registrant_id: ID2,
                     wca_id: None,
-                }),
-                attempt_count: 5,
-                time_limit_info: None,
-                is_blank: false,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
+                },
+                Some(2),
+                5,
+                None,
+            ),
         ];
 
         let partitions = partition_scorecards("Comp2026", &cards, &[]);
@@ -544,46 +559,38 @@ mod tests {
     #[test]
     fn test_partition_scorecards_by_event() {
         let cards = vec![
-            ScorecardItem {
-                scorecard_number: 1,
-                station_number: Some(1),
-                competition_name: "Comp",
-                event: WcaEvent::E333,
-                round_number: 1,
-                group_number: 1,
-                stage_name: Some("Red Stage"),
-                competitor: Some(Competitor {
+            ScorecardItem::scorecard(
+                "Comp",
+                WcaEvent::E333,
+                1,
+                1,
+                Some("Red Stage"),
+                Competitor {
                     name: "Alice",
                     local_name: None,
                     registrant_id: ID1,
                     wca_id: None,
-                }),
-                attempt_count: 5,
-                time_limit_info: None,
-                is_blank: false,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
-            ScorecardItem {
-                scorecard_number: 2,
-                station_number: Some(2),
-                competition_name: "Comp",
-                event: WcaEvent::E222,
-                round_number: 1,
-                group_number: 2,
-                stage_name: Some("Blue Stage"),
-                competitor: Some(Competitor {
+                },
+                Some(1),
+                5,
+                None,
+            ),
+            ScorecardItem::scorecard(
+                "Comp",
+                WcaEvent::E222,
+                1,
+                2,
+                Some("Blue Stage"),
+                Competitor {
                     name: "Bob",
                     local_name: None,
                     registrant_id: ID2,
                     wca_id: None,
-                }),
-                attempt_count: 5,
-                time_limit_info: None,
-                is_blank: false,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
+                },
+                Some(2),
+                5,
+                None,
+            ),
         ];
 
         let partitions = partition_scorecards("Comp2026", &cards, &[SplitBy::Event]);
@@ -595,46 +602,38 @@ mod tests {
     #[test]
     fn test_partition_scorecards_by_all_three() {
         let cards = vec![
-            ScorecardItem {
-                scorecard_number: 1,
-                station_number: Some(1),
-                competition_name: "Comp",
-                event: WcaEvent::E333,
-                round_number: 1,
-                group_number: 1,
-                stage_name: Some("Red Stage"),
-                competitor: Some(Competitor {
+            ScorecardItem::scorecard(
+                "Comp",
+                WcaEvent::E333,
+                1,
+                1,
+                Some("Red Stage"),
+                Competitor {
                     name: "Alice",
                     local_name: None,
                     registrant_id: ID1,
                     wca_id: None,
-                }),
-                attempt_count: 5,
-                time_limit_info: None,
-                is_blank: false,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
-            ScorecardItem {
-                scorecard_number: 2,
-                station_number: Some(2),
-                competition_name: "Comp",
-                event: WcaEvent::E333,
-                round_number: 1,
-                group_number: 2,
-                stage_name: Some("Red Stage"),
-                competitor: Some(Competitor {
+                },
+                Some(1),
+                5,
+                None,
+            ),
+            ScorecardItem::scorecard(
+                "Comp",
+                WcaEvent::E333,
+                1,
+                2,
+                Some("Red Stage"),
+                Competitor {
                     name: "Bob",
                     local_name: None,
                     registrant_id: ID2,
                     wca_id: None,
-                }),
-                attempt_count: 5,
-                time_limit_info: None,
-                is_blank: false,
-                is_cover_sheet: false,
-                total_group_cards: 0,
-            },
+                },
+                Some(2),
+                5,
+                None,
+            ),
         ];
 
         let partitions = partition_scorecards(
@@ -656,26 +655,22 @@ mod tests {
     #[test]
     fn test_validate_split_compatibility() {
         use options::CoverSheetBy;
-        let card1 = ScorecardItem {
-            scorecard_number: 1,
-            station_number: Some(1),
-            competition_name: "Comp",
-            event: WcaEvent::E333,
-            round_number: 1,
-            group_number: 1,
-            stage_name: Some("Red Stage"),
-            competitor: Some(Competitor {
+        let card1 = ScorecardItem::scorecard(
+            "Comp",
+            WcaEvent::E333,
+            1,
+            1,
+            Some("Red Stage"),
+            Competitor {
                 name: "Alice",
                 local_name: None,
                 registrant_id: ID1,
                 wca_id: None,
-            }),
-            attempt_count: 5,
-            time_limit_info: None,
-            is_blank: false,
-            is_cover_sheet: false,
-            total_group_cards: 0,
-        };
+            },
+            Some(1),
+            5,
+            None,
+        );
 
         let opts_cover_on = ResolvedOptions {
             cover_sheets: true,

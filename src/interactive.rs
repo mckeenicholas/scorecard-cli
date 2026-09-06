@@ -52,6 +52,7 @@ impl std::fmt::Display for CoverSheetChoice {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExtraOption {
+    StartGroupOnNewPage,
     PrintStations,
     LocalNamesFirst,
     PrintOneName,
@@ -63,6 +64,12 @@ enum ExtraOption {
 impl std::fmt::Display for ExtraOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ExtraOption::StartGroupOnNewPage => {
+                write!(
+                    f,
+                    "Start group on new page (insert blank spaces to align top-left)"
+                )
+            }
             ExtraOption::PrintStations => write!(f, "Print station numbers"),
             ExtraOption::LocalNamesFirst => write!(f, "Display local names first"),
             ExtraOption::PrintOneName => write!(f, "Only print one name"),
@@ -295,10 +302,12 @@ fn get_path_suggestions(query: &str) -> Vec<Suggestion> {
 }
 
 /// Queries the WCA API for competitions matching the search term.
-fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, reqwest::Error> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_millis(2500))
-        .build()?;
+fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, ureq::Error> {
+    let agent: ureq::Agent = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_millis(2500)))
+        .http_status_as_error(false)
+        .build()
+        .into();
 
     let mut encoded_query = String::with_capacity(query.len() * 3);
     for b in query.as_bytes() {
@@ -315,13 +324,13 @@ fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, reqwest::Error
     }
     let url = format!("https://www.worldcubeassociation.org/api/v0/competitions?q={encoded_query}");
 
-    let resp = client.get(&url).send()?;
+    let mut resp = agent.get(&url).call()?;
 
     if !resp.status().is_success() {
         return Ok(Vec::new());
     }
 
-    let items: Vec<WcaItem> = resp.json()?;
+    let items: Vec<WcaItem> = resp.body_mut().read_json()?;
     let id_width = items
         .iter()
         .take(8)
@@ -901,6 +910,7 @@ fn prompt_split_selection() -> Result<Option<Vec<SplitBy>>, InteractiveError> {
 }
 
 struct ExtraFlags {
+    start_group_on_new_page: bool,
     print_stations: bool,
     local_names_first: bool,
     print_one_name: bool,
@@ -911,20 +921,26 @@ struct ExtraFlags {
 
 fn prompt_extra_options_selection(
     default_opts: &ResolvedOptions,
+    format: PageFormat,
 ) -> Result<ExtraFlags, InteractiveError> {
-    let extra_options_list = vec![
+    let mut extra_options_list = Vec::new();
+    if format == PageFormat::Group {
+        extra_options_list.push(ExtraOption::StartGroupOnNewPage);
+    }
+    extra_options_list.extend([
         ExtraOption::PrintStations,
         ExtraOption::LocalNamesFirst,
         ExtraOption::PrintOneName,
         ExtraOption::ScrambleCheckerTopRanked,
         ExtraOption::ScrambleCheckerFinalRounds,
         ExtraOption::ScrambleCheckerBlank,
-    ];
+    ]);
 
     let default_extra_indices: Vec<usize> = extra_options_list
         .iter()
         .enumerate()
         .filter(|(_, opt)| match opt {
+            ExtraOption::StartGroupOnNewPage => default_opts.start_group_on_new_page,
             ExtraOption::PrintStations => default_opts.print_stations,
             ExtraOption::LocalNamesFirst => default_opts.local_names_first,
             ExtraOption::PrintOneName => default_opts.print_one_name,
@@ -943,6 +959,7 @@ fn prompt_extra_options_selection(
     .prompt()?;
 
     Ok(ExtraFlags {
+        start_group_on_new_page: extra_options.contains(&ExtraOption::StartGroupOnNewPage),
         print_stations: extra_options.contains(&ExtraOption::PrintStations),
         local_names_first: extra_options.contains(&ExtraOption::LocalNamesFirst),
         print_one_name: extra_options.contains(&ExtraOption::PrintOneName),
@@ -964,7 +981,7 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), InteractiveError>
     let format = prompt_page_format(default_opts.format)?;
     let cover_sheets = prompt_cover_sheets_selection(&default_opts)?;
     let split = prompt_split_selection()?;
-    let extras = prompt_extra_options_selection(&default_opts)?;
+    let extras = prompt_extra_options_selection(&default_opts, format)?;
 
     let cli = Cli {
         comp_source: Some(comp_source),
@@ -979,6 +996,7 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), InteractiveError>
         scramble_checker_top_ranked: Some(extras.scramble_checker_top_ranked),
         scramble_checker_final_rounds: Some(extras.scramble_checker_final_rounds),
         scramble_checker_blank: Some(extras.scramble_checker_blank),
+        start_group_on_new_page: Some(extras.start_group_on_new_page),
         font: None,
     };
 
@@ -1054,6 +1072,11 @@ mod tests {
 
     #[test]
     fn test_extra_option_display() {
+        assert!(
+            ExtraOption::StartGroupOnNewPage
+                .to_string()
+                .contains("Start group on new page")
+        );
         assert_eq!(
             ExtraOption::PrintStations.to_string(),
             "Print station numbers"

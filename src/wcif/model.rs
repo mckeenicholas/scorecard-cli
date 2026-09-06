@@ -500,4 +500,5 @@ pub struct GroupifierCompetitionConfig {
     pub print_scramble_checker_for_top_ranked_competitors: Option<bool>,
     pub print_scramble_checker_for_final_rounds: Option<bool>,
     pub print_scramble_checker_for_blank_scorecards: Option<bool>,
+    pub start_group_on_new_page: Option<bool>,
 }
