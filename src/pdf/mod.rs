@@ -8,7 +8,7 @@ pub use layout::{PageFormat, PageLayout, PaperSize};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scorecard::{ScorecardItem, TimeLimitInfo};
+    use crate::scorecard::{ScorecardItem, TimeLimitInfo, WcaEvent};
     use crate::wcif::Competition;
 
     #[test]
@@ -29,8 +29,7 @@ mod tests {
                 scorecard_number: 1,
                 station_number: Some(1),
                 competition_name: "Test Comp",
-                event_id: "333",
-                event_name: "3x3x3 Cube",
+                event: WcaEvent::E333,
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Main Stage"),
@@ -52,8 +51,7 @@ mod tests {
                 scorecard_number: 2,
                 station_number: None,
                 competition_name: "Test Comp",
-                event_id: "333",
-                event_name: "3x3x3 Cube",
+                event: WcaEvent::E333,
                 round_number: 2,
                 group_number: 1,
                 stage_name: None,

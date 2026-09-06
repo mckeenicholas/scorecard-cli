@@ -73,6 +73,7 @@ impl<'a> ColumnDef<'a> {
 }
 
 /// Specification for rendering a structured grid table.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TableSpec<'a> {
     pub tbl_x: f32,
     pub tbl_w: f32,
@@ -83,6 +84,7 @@ pub struct TableSpec<'a> {
 }
 
 /// Specification for rendering text with alignment and font styling.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextSpec<'a> {
     pub text: &'a str,
     pub cell_x: f32,
@@ -148,9 +150,9 @@ impl AttemptTableSpec {
             info.limit_centiseconds.map(|cs| {
                 let time_str = TimeLimitInfo::format_centiseconds(cs);
                 if info.is_cumulative {
-                    format!("Time limit: {} cumulative", time_str)
+                    format!("Time limit: {time_str} cumulative")
                 } else {
-                    format!("Time limit: {}", time_str)
+                    format!("Time limit: {time_str}")
                 }
             })
         });
@@ -177,8 +179,7 @@ impl AttemptTableSpec {
                                     "average"
                                 };
                                 AttemptItem::CutoffBanner(format!(
-                                    "-------- Must have solve under {} to complete {} --------",
-                                    cutoff_str, format_name
+                                    "-------- Must have solve under {cutoff_str} to complete {format_name} --------"
                                 ))
                             })
                     })
@@ -370,7 +371,7 @@ impl<'a> CardPainter<'a> {
                     ColumnDef::new("Group", 0.20, TextAlign::Center),
                     ColumnDef::new("Station", 0.22, TextAlign::Center),
                 ],
-                &[&[card.event_name, round_str, group_str, station_val]],
+                &[&[card.event_name(), round_str, group_str, station_val]],
             );
         } else {
             self.draw_grid_table(
@@ -381,7 +382,7 @@ impl<'a> CardPainter<'a> {
                     ColumnDef::new("Round", 0.25, TextAlign::Center),
                     ColumnDef::new("Group", 0.25, TextAlign::Center),
                 ],
-                &[&[card.event_name, round_str, group_str]],
+                &[&[card.event_name(), round_str, group_str]],
             );
         }
     }
@@ -405,10 +406,7 @@ impl<'a> CardPainter<'a> {
                 &[&["", name_val]],
             );
         } else {
-            let id_val = card
-                .registrant_id
-                .map(|id| id_buf.format(id))
-                .unwrap_or("-");
+            let id_val = card.registrant_id.map_or("-", |id| id_buf.format(id));
             let wca_id_val = card.display_wca_id();
 
             self.draw_grid_table(
@@ -669,14 +667,13 @@ impl<'a> CardPainter<'a> {
         self.draw_full_width(card.competition_name, self.cur_y, 11.5, true);
 
         self.advance_y(14.0);
-        let event_round_str = format!("{} Round {}", card.event_name, card.round_number);
+        let event_round_str = format!("{} Round {}", card.event_name(), card.round_number);
         self.draw_full_width(&event_round_str, self.cur_y, 10.0, true);
 
         let group_stage_str = match (card.group_number, card.stage_name) {
-            (g, Some(stage)) if g > 0 => format!("Group {} ({})", g, stage),
-            (g, None) if g > 0 => format!("Group {}", g),
-            (0, Some(stage)) => format!("Stage: {}", stage),
-            (0, None) => String::new(),
+            (g, Some(stage)) if g > 0 => format!("Group {g} ({stage})"),
+            (g, None) if g > 0 => format!("Group {g}"),
+            (0, Some(stage)) => format!("Stage: {stage}"),
             _ => String::new(),
         };
         if !group_stage_str.is_empty() {
@@ -690,7 +687,7 @@ impl<'a> CardPainter<'a> {
         self.draw_section_banner("FOR DELEGATE");
 
         self.advance_y(14.0);
-        let bundle_str = format!("1. Bundled all {} scorecards", total_cards);
+        let bundle_str = format!("1. Bundled all {total_cards} scorecards");
         self.draw_checkbox_item(&bundle_str);
 
         self.advance_y(13.0);
@@ -748,7 +745,7 @@ impl ScorecardRenderer {
 pub struct TableDrawer;
 
 impl TableDrawer {
-    /// Draws a styled grid table, advancing cur_y to the bottom of the table.
+    /// Draws a styled grid table, advancing `cur_y` to the bottom of the table.
     pub fn draw(ops: &mut Vec<Op>, cur_y: &mut f32, spec: TableSpec<'_>, theme: &ScorecardTheme) {
         let top_y = *cur_y;
         let total_h = spec.header_h + spec.row_h * (spec.rows.len() as f32);
@@ -898,7 +895,7 @@ impl TableDrawer {
         }
     }
 
-    /// Draws a styled rectangle primitive (fill or stroke) using RectSpec geometry.
+    /// Draws a styled rectangle primitive (fill or stroke) using `RectSpec` geometry.
     pub fn draw_rect(ops: &mut Vec<Op>, rect: RectSpec, mode: PaintMode) {
         ops.push(Op::DrawRectangle {
             rectangle: Rect {
@@ -1015,7 +1012,7 @@ impl TextDrawer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scorecard::ScorecardItem;
+    use crate::scorecard::{ScorecardItem, WcaEvent};
 
     #[test]
     fn test_estimate_width() {
@@ -1035,8 +1032,7 @@ mod tests {
             scorecard_number: 1,
             station_number: Some(4),
             competition_name: "Test Comp 2026",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: Some("Red Stage"),
@@ -1086,8 +1082,7 @@ mod tests {
             scorecard_number: 0,
             station_number: None,
             competition_name: "Ocean State Cubikon 2025",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: Some("Main Hall"),
@@ -1131,8 +1126,7 @@ mod tests {
             scorecard_number: 1,
             station_number: None,
             competition_name: "Test Comp 2026",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: None,
@@ -1193,8 +1187,7 @@ mod tests {
             scorecard_number: 1,
             station_number: None,
             competition_name: "Test Comp 2026",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: None,
@@ -1264,8 +1257,7 @@ mod tests {
             scorecard_number: 1,
             station_number: None,
             competition_name: "Test Comp 2026",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 2,
             group_number: 1,
             stage_name: None,

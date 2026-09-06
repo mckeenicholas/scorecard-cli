@@ -36,8 +36,7 @@ impl AdvancementCalculator {
             "percent" => Self::calculate_percent_advancement(cond.value, comp, event, prev_idx),
             "attemptResult" => default_result("cutoff-based advancement, defaulted to 16 blanks"),
             other => default_result(format!(
-                "advancement condition type {:?}, defaulted to 16 blanks",
-                other
+                "advancement condition type {other:?}, defaulted to 16 blanks"
             )),
         }
     }
@@ -62,8 +61,7 @@ impl AdvancementCalculator {
         AdvancementResult {
             blank_count: capped,
             reason: format!(
-                "based on ranking advancement limit of top {} from previous round",
-                capped
+                "based on ranking advancement limit of top {capped} from previous round"
             ),
         }
     }
@@ -80,8 +78,7 @@ impl AdvancementCalculator {
         AdvancementResult {
             blank_count: calculated,
             reason: format!(
-                "based on percentage advancement of {}% of ~{} competitors ({} blanks)",
-                percent, prev_pool, calculated
+                "based on percentage advancement of {percent}% of ~{prev_pool} competitors ({calculated} blanks)"
             ),
         }
     }

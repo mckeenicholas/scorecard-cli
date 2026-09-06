@@ -31,12 +31,12 @@ impl Competition {
         serde_json::from_slice(bytes)
     }
 
-    /// Returns the display name for the competition (short_name if available, else name).
+    /// Returns the display name for the competition (`short_name` if available, else name).
     pub fn display_name(&self) -> &str {
         self.short_name.as_deref().unwrap_or(&self.name)
     }
 
-    /// Builds a map of activity ID -> ScheduledActivityInfo (activity_code, room_name).
+    /// Builds a map of activity ID -> `ScheduledActivityInfo` (`activity_code`, `room_name`).
     ///
     /// NOTE: This traverses parent activities and their direct children (2 levels).
     /// WCA WCIF nesting is typically: Round Activity -> Group Activity, so this covers
@@ -56,7 +56,7 @@ impl Competition {
                         (
                             a.id,
                             ScheduledActivityInfo {
-                                activity_code: a.activity_code.as_str(),
+                                activity_code: a.code.as_str(),
                                 room_name,
                             },
                         )
@@ -148,7 +148,8 @@ pub struct Avatar {
 #[serde(rename_all = "camelCase")]
 pub struct Assignment {
     pub activity_id: usize,
-    pub assignment_code: Option<String>,
+    #[serde(rename = "assignmentCode")]
+    pub code: Option<String>,
     pub station_number: Option<usize>,
 }
 
@@ -194,8 +195,7 @@ impl Round {
         match self.format.as_deref() {
             Some("1") => 1,
             Some("2") => 2,
-            Some("3") | Some("m") => 3,
-            Some("5") | Some("a") => 5,
+            Some("3" | "m") => 3,
             _ => 5,
         }
     }
@@ -258,7 +258,8 @@ pub struct Room {
 pub struct Activity {
     pub id: usize,
     pub name: String,
-    pub activity_code: String,
+    #[serde(rename = "activityCode")]
+    pub code: String,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
     #[serde(default)]

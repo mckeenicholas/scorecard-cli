@@ -62,12 +62,12 @@ impl PdfGenerator {
         }
     }
 
-    /// Creates a new PdfGenerator with specified layout and format.
+    /// Creates a new `PdfGenerator` with specified layout and format.
     pub fn with_format(layout: PageLayout, format: PageFormat) -> Self {
         Self { layout, format }
     }
 
-    /// Generates a PDF containing all scorecards and streams directly to any Write destination (e.g. BufWriter<File>).
+    /// Generates a PDF containing all scorecards and streams directly to any Write destination (e.g. `BufWriter`<File>).
     /// Returns the number of pages generated.
     pub fn generate_to_writer<W: Write>(
         &self,
@@ -115,7 +115,7 @@ impl PdfGenerator {
             .collect()
     }
 
-    /// Generates pages sequentially chunked by cards_per_page.
+    /// Generates pages sequentially chunked by `cards_per_page`.
     fn build_grouped_pages(&self, cards: &[ScorecardItem<'_>]) -> Vec<PdfPage> {
         let layout = self.layout;
         cards
@@ -133,7 +133,7 @@ impl PdfGenerator {
             .collect()
     }
 
-    /// Assembles a PdfDocument model from a list of generated PdfPages.
+    /// Assembles a `PdfDocument` model from a list of generated `PdfPages`.
     fn build_pdf_document(title: &str, pages: Vec<PdfPage>) -> PdfDocument {
         let mut doc = PdfDocument::new(title);
         doc.pages = pages;

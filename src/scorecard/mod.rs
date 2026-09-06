@@ -2,11 +2,13 @@ pub mod events;
 pub mod model;
 pub mod planner;
 
+pub use events::WcaEvent;
 pub use model::{ScorecardItem, TimeLimitInfo};
 pub use planner::{PlannerError, ScorecardPlanner};
 
 #[cfg(test)]
 mod tests {
+    use super::events::ActivityCode;
     use super::model::{PlannedRoundSummary, ScorecardPlan};
     use super::*;
 
@@ -20,13 +22,74 @@ mod tests {
     }
 
     #[test]
+    fn test_wca_event_properties() {
+        assert_eq!(WcaEvent::ALL.len(), 17);
+        for event in WcaEvent::ALL {
+            let code = event.code();
+            let name = event.display_name();
+            assert!(!code.is_empty());
+            assert!(!name.is_empty());
+            assert_eq!(WcaEvent::from_id(code), Some(event));
+            assert_eq!(code.parse::<WcaEvent>().unwrap(), event);
+            assert_eq!(event.to_string(), code);
+            assert_eq!(event.as_ref(), code);
+        }
+        assert!("invalid".parse::<WcaEvent>().is_err());
+    }
+
+    #[test]
+    fn test_activity_code_parsing_and_formatting() {
+        // Round only
+        let ac_round = ActivityCode::parse("333-r1").unwrap();
+        assert_eq!(ac_round.event, WcaEvent::E333);
+        assert_eq!(ac_round.round_number, 1);
+        assert_eq!(ac_round.group_number, None);
+        assert_eq!(ac_round.group_or_default(), 1);
+        assert_eq!(ac_round.to_string(), "333-r1");
+        assert_eq!(ac_round.round_id(), "333-r1");
+        assert!(ac_round.matches_round(WcaEvent::E333, 1));
+        assert!(!ac_round.matches_round(WcaEvent::E333, 2));
+        assert!(!ac_round.matches_round(WcaEvent::E222, 1));
+
+        // Round and group
+        let ac_group = ActivityCode::parse("minx-r2-g3").unwrap();
+        assert_eq!(ac_group.event, WcaEvent::Minx);
+        assert_eq!(ac_group.round_number, 2);
+        assert_eq!(ac_group.group_number, Some(3));
+        assert_eq!(ac_group.group_or_default(), 3);
+        assert_eq!(ac_group.to_string(), "minx-r2-g3");
+        assert_eq!(ac_group.round_id(), "minx-r2");
+
+        // Round constructors
+        let round_ctor = ActivityCode::round(WcaEvent::Clock, 3);
+        assert_eq!(round_ctor.to_string(), "clock-r3");
+        let group_ctor = ActivityCode::group(WcaEvent::Sq1, 1, 2);
+        assert_eq!(group_ctor.to_string(), "sq1-r1-g2");
+
+        // Parse invalid cases
+        assert!(ActivityCode::parse("other-lunch").is_none());
+        assert!(ActivityCode::parse("333").is_none());
+        assert!(ActivityCode::parse("333-1").is_none());
+        assert!(ActivityCode::parse("333-r0").is_none());
+        assert!(ActivityCode::parse("333-r1-g0").is_none());
+        assert!(ActivityCode::parse("333-r1-g1-extra").is_none());
+        assert!(ActivityCode::parse("invalid-r1").is_none());
+
+        // FromStr
+        assert_eq!(
+            "444-r1-g2".parse::<ActivityCode>().unwrap(),
+            ActivityCode::group(WcaEvent::E444, 1, 2)
+        );
+        assert!("invalid".parse::<ActivityCode>().is_err());
+    }
+
+    #[test]
     fn test_scorecard_item_display_methods() {
         let item = ScorecardItem {
             scorecard_number: 42,
             station_number: Some(7),
             competition_name: "Very Long Competition Name 2026",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: Some("Red Stage"),
@@ -169,12 +232,12 @@ mod tests {
 
         let (targets_all, _) = ScorecardPlanner::resolve_all_targets(&comp);
         assert_eq!(targets_all.len(), 1);
-        assert_eq!(targets_all[0].event_id, "333");
+        assert_eq!(targets_all[0].event, WcaEvent::E333);
 
         let (targets_explicit, notes_explicit) =
             ScorecardPlanner::resolve_targets(&comp, &["333", "333fm"]);
         assert_eq!(targets_explicit.len(), 1);
-        assert_eq!(targets_explicit[0].event_id, "333");
+        assert_eq!(targets_explicit[0].event, WcaEvent::E333);
         assert_eq!(notes_explicit.len(), 1);
         assert!(notes_explicit[0].contains("333fm"));
     }
@@ -210,17 +273,17 @@ mod tests {
                         Assignment {
                             activity_id: 101, // 333-r1-g1
                             station_number: Some(1),
-                            assignment_code: Some("competitor".to_string()),
+                            code: Some("competitor".to_string()),
                         },
                         Assignment {
                             activity_id: 102, // 333-r2-g1 (Alice advanced to R2!)
                             station_number: Some(5),
-                            assignment_code: Some("competitor".to_string()),
+                            code: Some("competitor".to_string()),
                         },
                         Assignment {
                             activity_id: 201, // 222-r1-g1
                             station_number: Some(2),
-                            assignment_code: Some("competitor".to_string()),
+                            code: Some("competitor".to_string()),
                         },
                     ],
                     personal_bests: vec![],
@@ -243,7 +306,7 @@ mod tests {
                         Assignment {
                             activity_id: 101, // 333-r1-g1
                             station_number: Some(2),
-                            assignment_code: Some("competitor".to_string()),
+                            code: Some("competitor".to_string()),
                         },
                         // Bob did not advance to 333-r2!
                     ],
@@ -312,7 +375,7 @@ mod tests {
                             Activity {
                                 id: 101,
                                 name: "3x3x3 Round 1 Group 1".to_string(),
-                                activity_code: "333-r1-g1".to_string(),
+                                code: "333-r1-g1".to_string(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -321,7 +384,7 @@ mod tests {
                             Activity {
                                 id: 102,
                                 name: "3x3x3 Round 2 Group 1".to_string(),
-                                activity_code: "333-r2-g1".to_string(),
+                                code: "333-r2-g1".to_string(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -330,7 +393,7 @@ mod tests {
                             Activity {
                                 id: 201,
                                 name: "2x2x2 Round 1 Group 1".to_string(),
-                                activity_code: "222-r1-g1".to_string(),
+                                code: "222-r1-g1".to_string(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -402,7 +465,7 @@ mod tests {
                     assignments: vec![Assignment {
                         activity_id: 1011,
                         station_number: Some(5),
-                        assignment_code: Some("competitor".to_string()),
+                        code: Some("competitor".to_string()),
                     }],
                     personal_bests: vec![],
                 },
@@ -472,13 +535,13 @@ mod tests {
                         activities: vec![Activity {
                             id: 101,
                             name: "3x3x3 Round 1".to_string(),
-                            activity_code: "333-r1".to_string(),
+                            code: "333-r1".to_string(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![Activity {
                                 id: 1011,
                                 name: "3x3x3 Round 1 Group 1".to_string(),
-                                activity_code: "333-r1-g1".to_string(),
+                                code: "333-r1-g1".to_string(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -557,7 +620,7 @@ mod tests {
                     roles: None,
                     assignments: vec![Assignment {
                         activity_id: 1011,
-                        assignment_code: Some("competitor".to_string()),
+                        code: Some("competitor".to_string()),
                         station_number: Some(1),
                     }],
                     personal_bests: vec![],
@@ -578,7 +641,7 @@ mod tests {
                     roles: None,
                     assignments: vec![Assignment {
                         activity_id: 1011,
-                        assignment_code: Some("competitor".to_string()),
+                        code: Some("competitor".to_string()),
                         station_number: Some(2),
                     }],
                     personal_bests: vec![],
@@ -610,13 +673,13 @@ mod tests {
                         activities: vec![Activity {
                             id: 101,
                             name: "3x3x3 Round 1".to_string(),
-                            activity_code: "333-r1".to_string(),
+                            code: "333-r1".to_string(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![Activity {
                                 id: 1011,
                                 name: "3x3x3 Round 1 Group 1".to_string(),
-                                activity_code: "333-r1-g1".to_string(),
+                                code: "333-r1-g1".to_string(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -760,7 +823,7 @@ mod tests {
                     assignments: vec![Assignment {
                         activity_id: 101, // G1 on Blue Stage
                         station_number: Some(1),
-                        assignment_code: Some("competitor".to_string()),
+                        code: Some("competitor".to_string()),
                     }],
                     personal_bests: vec![],
                 },
@@ -781,7 +844,7 @@ mod tests {
                     assignments: vec![Assignment {
                         activity_id: 102, // G1 on Red Stage
                         station_number: Some(1),
-                        assignment_code: Some("competitor".to_string()),
+                        code: Some("competitor".to_string()),
                     }],
                     personal_bests: vec![],
                 },
@@ -802,7 +865,7 @@ mod tests {
                     assignments: vec![Assignment {
                         activity_id: 103, // G2 on Red Stage
                         station_number: Some(1),
-                        assignment_code: Some("competitor".to_string()),
+                        code: Some("competitor".to_string()),
                     }],
                     personal_bests: vec![],
                 },
@@ -834,7 +897,7 @@ mod tests {
                             activities: vec![Activity {
                                 id: 101,
                                 name: "3x3x3 Round 1 Group 1".to_string(),
-                                activity_code: "333-r1-g1".to_string(),
+                                code: "333-r1-g1".to_string(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -849,7 +912,7 @@ mod tests {
                                 Activity {
                                     id: 102,
                                     name: "3x3x3 Round 1 Group 1".to_string(),
-                                    activity_code: "333-r1-g1".to_string(),
+                                    code: "333-r1-g1".to_string(),
                                     start_time: None,
                                     end_time: None,
                                     child_activities: vec![],
@@ -858,7 +921,7 @@ mod tests {
                                 Activity {
                                     id: 103,
                                     name: "3x3x3 Round 1 Group 2".to_string(),
-                                    activity_code: "333-r1-g2".to_string(),
+                                    code: "333-r1-g2".to_string(),
                                     start_time: None,
                                     end_time: None,
                                     child_activities: vec![],
@@ -957,13 +1020,13 @@ mod tests {
             items: vec![],
             summaries: vec![
                 PlannedRoundSummary::OpenRound {
-                    event_id: "333".to_string(),
+                    event: WcaEvent::E333,
                     round_number: 1,
                     competitor_count: 2,
                     sample_competitor_names: vec!["Alice".to_string(), "Bob".to_string()],
                 },
                 PlannedRoundSummary::SubsequentRound {
-                    event_id: "333".to_string(),
+                    event: WcaEvent::E333,
                     round_number: 2,
                     blank_count: 16,
                     reason: "top 16 ranking".to_string(),

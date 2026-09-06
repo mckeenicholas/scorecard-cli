@@ -15,10 +15,6 @@ pub enum SplitBy {
     Stage,
 }
 
-/// Backwards-compatible alias for `SplitBy`.
-#[allow(dead_code)]
-pub type ShardBy = SplitBy;
-
 impl std::fmt::Display for SplitBy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -32,10 +28,6 @@ impl std::fmt::Display for SplitBy {
 /// Error returned when parsing an invalid split criterion string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseSplitByError(pub String);
-
-/// Backwards-compatible alias for `ParseSplitByError`.
-#[allow(dead_code)]
-pub type ParseShardByError = ParseSplitByError;
 
 impl std::fmt::Display for ParseSplitByError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -93,7 +85,7 @@ pub enum CoverSheetBy {
 
 impl CoverSheetBy {
     /// Returns the hierarchy tier of the cover sheet criterion (1 is highest tier).
-    pub fn tier(&self) -> u8 {
+    pub fn tier(self) -> u8 {
         match self {
             CoverSheetBy::Round => 1,
             CoverSheetBy::Group => 2,
@@ -405,7 +397,7 @@ impl ResolvedOptions {
         }
 
         if let Some(ref s) = cli.split {
-            self.split = s.clone();
+            self.split.clone_from(s);
             Self::normalize_split_list(&mut self.split);
         }
 

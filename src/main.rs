@@ -9,7 +9,7 @@ use clap::Parser;
 use mimalloc::MiMalloc;
 use options::{Cli, ResolvedOptions, SplitBy};
 use pdf::{PageLayout, PdfGenerationError, PdfGenerator};
-use scorecard::{PlannerError, ScorecardItem, ScorecardPlanner};
+use scorecard::{PlannerError, ScorecardItem, ScorecardPlanner, WcaEvent};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs::File;
@@ -41,23 +41,23 @@ fn slugify(s: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct SplitKey {
     stage: Option<String>,
-    event: Option<String>,
+    event: Option<(WcaEvent, usize)>,
     group: Option<usize>,
 }
 
 impl SplitKey {
     fn to_filename(&self, comp_id: &str) -> String {
-        let mut name = format!("{}-scorecards", comp_id);
+        let mut name = format!("{comp_id}-scorecards");
         if let Some(ref stage) = self.stage {
             name.push('-');
             name.push_str(stage);
         }
-        if let Some(ref event) = self.event {
-            name.push('-');
-            name.push_str(event);
+        if let Some((event, round_number)) = self.event {
+            let event_id = event.code();
+            let _ = write!(name, "-{event_id}-r{round_number}");
         }
         if let Some(group) = self.group {
-            write!(name, "-group{}", group).unwrap();
+            let _ = write!(name, "-group{group}");
         }
         name.push_str(".pdf");
         name
@@ -77,7 +77,7 @@ fn build_split_key(
             None
         },
         event: if has_event {
-            Some(format!("{}-r{}", card.event_id, card.round_number))
+            Some((card.event, card.round_number))
         } else {
             None
         },
@@ -95,7 +95,7 @@ fn partition_scorecards<'a>(
     split_by: &[SplitBy],
 ) -> Vec<(String, Vec<ScorecardItem<'a>>)> {
     if split_by.is_empty() {
-        let out_filename = format!("{}-scorecards.pdf", comp_id);
+        let out_filename = format!("{comp_id}-scorecards.pdf");
         return vec![(out_filename, cards.to_vec())];
     }
 
@@ -167,7 +167,7 @@ fn resolve_options(cli: &Cli, comp: &wcif::Competition) -> ResolvedOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct BundleKey<'a> {
     stage_name: Option<&'a str>,
-    event_id: &'a str,
+    event: WcaEvent,
     round_number: usize,
     group_number: usize,
 }
@@ -184,10 +184,6 @@ pub enum SplitError {
         second_file: String,
     },
 }
-
-/// Backwards-compatible alias for `SplitError`.
-#[allow(dead_code)]
-pub type ShardingError = SplitError;
 
 impl std::fmt::Display for SplitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -308,14 +304,14 @@ fn validate_card_bundle_placement(
             }
             let bundle_key = BundleKey {
                 stage_name: card.stage_name,
-                event_id: card.event_id,
+                event: card.event,
                 round_number: card.round_number,
                 group_number: card.group_number,
             };
             if let Some(existing_file) = bundle_partition_map.get(&bundle_key) {
                 if *existing_file != filename.as_str() {
                     return Err(SplitError::SplitBundle {
-                        event_id: card.event_id.to_string(),
+                        event_id: card.event.code().to_string(),
                         round_number: card.round_number,
                         group_number: card.group_number,
                         first_file: existing_file.to_string(),
@@ -483,8 +479,7 @@ mod tests {
                 scorecard_number: 1,
                 station_number: Some(1),
                 competition_name: "Comp",
-                event_id: "333",
-                event_name: "3x3x3 Cube",
+                event: WcaEvent::E333,
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Red Stage"),
@@ -501,8 +496,7 @@ mod tests {
                 scorecard_number: 2,
                 station_number: Some(2),
                 competition_name: "Comp",
-                event_id: "222",
-                event_name: "2x2x2 Cube",
+                event: WcaEvent::E222,
                 round_number: 1,
                 group_number: 2,
                 stage_name: Some("Blue Stage"),
@@ -530,8 +524,7 @@ mod tests {
                 scorecard_number: 1,
                 station_number: Some(1),
                 competition_name: "Comp",
-                event_id: "333",
-                event_name: "3x3x3 Cube",
+                event: WcaEvent::E333,
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Red Stage"),
@@ -548,8 +541,7 @@ mod tests {
                 scorecard_number: 2,
                 station_number: Some(2),
                 competition_name: "Comp",
-                event_id: "222",
-                event_name: "2x2x2 Cube",
+                event: WcaEvent::E222,
                 round_number: 1,
                 group_number: 2,
                 stage_name: Some("Blue Stage"),
@@ -566,8 +558,8 @@ mod tests {
 
         let partitions = partition_scorecards("Comp2026", &cards, &[SplitBy::Event]);
         assert_eq!(partitions.len(), 2);
-        assert_eq!(partitions[0].0, "Comp2026-scorecards-222-r1.pdf");
-        assert_eq!(partitions[1].0, "Comp2026-scorecards-333-r1.pdf");
+        assert_eq!(partitions[0].0, "Comp2026-scorecards-333-r1.pdf");
+        assert_eq!(partitions[1].0, "Comp2026-scorecards-222-r1.pdf");
     }
 
     #[test]
@@ -577,8 +569,7 @@ mod tests {
                 scorecard_number: 1,
                 station_number: Some(1),
                 competition_name: "Comp",
-                event_id: "333",
-                event_name: "3x3x3 Cube",
+                event: WcaEvent::E333,
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Red Stage"),
@@ -595,8 +586,7 @@ mod tests {
                 scorecard_number: 2,
                 station_number: Some(2),
                 competition_name: "Comp",
-                event_id: "333",
-                event_name: "3x3x3 Cube",
+                event: WcaEvent::E333,
                 round_number: 1,
                 group_number: 2,
                 stage_name: Some("Red Stage"),
@@ -634,8 +624,7 @@ mod tests {
             scorecard_number: 1,
             station_number: Some(1),
             competition_name: "Comp",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: Some("Red Stage"),

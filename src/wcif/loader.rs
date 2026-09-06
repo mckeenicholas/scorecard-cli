@@ -108,8 +108,7 @@ impl WcifLoader {
 
     /// Fetches the public WCIF JSON for a competition ID from the WCA API.
     pub fn fetch_from_wca(comp_id: &str) -> Result<Competition, WcifLoadError> {
-        let spinner =
-            crate::progress::create_spinner(format!("Fetching WCIF for '{}'...", comp_id));
+        let spinner = crate::progress::create_spinner(format!("Fetching WCIF for '{comp_id}'..."));
         let bytes = Self::fetch_wca_api_bytes(comp_id, &spinner)?;
         spinner.finish_and_clear();
 
@@ -122,8 +121,7 @@ impl WcifLoader {
         spinner: &indicatif::ProgressBar,
     ) -> Result<Vec<u8>, WcifLoadError> {
         let api_url = format!(
-            "https://www.worldcubeassociation.org/api/v0/competitions/{}/wcif/public",
-            comp_id
+            "https://www.worldcubeassociation.org/api/v0/competitions/{comp_id}/wcif/public"
         );
 
         let client = reqwest::blocking::Client::builder()
@@ -143,7 +141,7 @@ impl WcifLoader {
             });
         }
 
-        spinner.set_message(format!("Downloading and parsing WCIF for '{}'...", comp_id));
+        spinner.set_message(format!("Downloading and parsing WCIF for '{comp_id}'..."));
 
         let bytes = resp.bytes()?;
 

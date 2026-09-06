@@ -1,4 +1,4 @@
-use super::events::event_name_by_id;
+use super::events::{ActivityCode, WcaEvent};
 use super::model::{PlannedRoundSummary, ScorecardItem, ScorecardPlan, TimeLimitInfo};
 use crate::options::CoverSheetBy;
 use crate::wcif::{
@@ -10,47 +10,90 @@ use std::collections::BTreeMap;
 /// Generation target representing an event and round to produce scorecards for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationTarget {
-    pub event_id: String,
+    pub event: WcaEvent,
     pub round_id: String,
     pub round_number: usize,
     pub is_open_round: bool,
 }
 
+impl GenerationTarget {
+    /// Returns the corresponding round activity code.
+    #[must_use]
+    pub const fn activity_code(&self) -> ActivityCode {
+        ActivityCode::round(self.event, self.round_number)
+    }
+}
+
 /// Parsed representation of an event CLI argument (e.g. "333", "333-r1", "333-1").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParsedEventArg<'a> {
-    pub event_id: &'a str,
+pub struct ParsedEventArg {
+    pub event: WcaEvent,
     pub round_number: Option<usize>,
 }
 
-fn parse_event_arg(arg: &str) -> ParsedEventArg<'_> {
-    match arg.split_once('-') {
-        Some((event_id, round_str)) => ParsedEventArg {
-            event_id,
-            round_number: round_str.trim_start_matches('r').parse::<usize>().ok(),
-        },
-        None => ParsedEventArg {
-            event_id: arg,
+fn parse_event_arg(arg: &str) -> Option<ParsedEventArg> {
+    if let Some((event_str, round_str)) = arg.split_once('-') {
+        let event = WcaEvent::from_id(event_str)?;
+        let round_number = round_str.trim_start_matches('r').parse::<usize>().ok();
+        Some(ParsedEventArg {
+            event,
+            round_number,
+        })
+    } else {
+        let event = WcaEvent::from_id(arg)?;
+        Some(ParsedEventArg {
+            event,
             round_number: None,
-        },
+        })
+    }
+}
+
+#[inline]
+fn matches_round_activity(activity_code: &str, round_target: ActivityCode) -> bool {
+    if let Some(code) = ActivityCode::parse(activity_code) {
+        code.matches_round(round_target.event, round_target.round_number)
+    } else {
+        let round_id = round_target.round_id();
+        activity_code
+            .strip_prefix(&round_id)
+            .is_some_and(|rem| rem.is_empty() || rem.starts_with("-g"))
+    }
+}
+
+#[inline]
+fn extract_group_number(activity_code: &str, round_target: ActivityCode) -> Option<usize> {
+    if let Some(code) = ActivityCode::parse(activity_code) {
+        if code.matches_round(round_target.event, round_target.round_number) {
+            Some(code.group_or_default())
+        } else {
+            None
+        }
+    } else {
+        let round_id = round_target.round_id();
+        let rem = activity_code.strip_prefix(&round_id)?;
+        if let Some(stripped) = rem.strip_prefix("-g") {
+            Some(stripped.parse().unwrap_or(1))
+        } else if rem.is_empty() {
+            Some(1)
+        } else {
+            None
+        }
     }
 }
 
 fn has_competitor_assignments(
     comp: &Competition,
     activity_map: &FxHashMap<usize, ScheduledActivityInfo<'_>>,
-    round_id: &str,
+    round_target: ActivityCode,
 ) -> bool {
-    let target_prefix = format!("{}-g", round_id);
     comp.persons
         .iter()
         .flat_map(|p| &p.assignments)
         .any(|assign| {
-            (assign.assignment_code.as_deref() == Some("competitor")
-                || assign.assignment_code.is_none())
-                && activity_map.get(&assign.activity_id).is_some_and(|info| {
-                    info.activity_code.starts_with(&target_prefix) || info.activity_code == round_id
-                })
+            (assign.code.as_deref() == Some("competitor") || assign.code.is_none())
+                && activity_map
+                    .get(&assign.activity_id)
+                    .is_some_and(|info| matches_round_activity(info.activity_code, round_target))
         })
 }
 
@@ -88,18 +131,17 @@ fn find_event_and_round<'a>(
     let event = comp
         .events
         .iter()
-        .find(|e| e.id == target.event_id)
-        .ok_or_else(|| PlannerError::EventNotFound(target.event_id.clone()))?;
+        .find(|e| e.id == target.event.code())
+        .ok_or_else(|| PlannerError::EventNotFound(target.event.code().to_string()))?;
 
     let round = event
         .rounds
         .iter()
-        .find(|r| {
-            r.id == target.round_id
-                || r.id == format!("{}-r{}", target.event_id, target.round_number)
-        })
+        .enumerate()
+        .find(|(idx, r)| r.id == target.round_id || idx + 1 == target.round_number)
+        .map(|(_, r)| r)
         .ok_or_else(|| PlannerError::RoundNotFound {
-            event_id: target.event_id.clone(),
+            event_id: target.event.code().to_string(),
             round_id: target.round_id.clone(),
         })?;
 
@@ -109,33 +151,22 @@ fn find_event_and_round<'a>(
 fn resolve_assignment<'a>(
     person: &'a Person,
     activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
-    target_prefix: &str,
-    round_id: &str,
+    round_target: ActivityCode,
 ) -> Option<(usize, Option<usize>, Option<&'a str>)> {
     person.assignments.iter().find_map(|assign| {
-        let is_competitor = assign.assignment_code.as_deref() == Some("competitor")
-            || assign.assignment_code.is_none();
+        let is_competitor = assign.code.as_deref() == Some("competitor") || assign.code.is_none();
         if !is_competitor {
             return None;
         }
         let info = activity_map.get(&assign.activity_id)?;
-        if let Some(stripped) = info.activity_code.strip_prefix(target_prefix) {
-            let group_num: usize = stripped.parse().unwrap_or(1);
-            Some((group_num, assign.station_number, info.room_name))
-        } else if info.activity_code == round_id {
-            Some((1, assign.station_number, info.room_name))
-        } else {
-            None
-        }
+        let group_num = extract_group_number(info.activity_code, round_target)?;
+        Some((group_num, assign.station_number, info.room_name))
     })
 }
 
 /// Formats a competitor's name. When `print_one_name` is true, removes any parenthesized local or Latin name.
-///
-/// For example:
-/// - `"Zhang San (张三)"` -> `"Zhang San"`
-/// - `"Lucas Burliga (Łukasz Burliga)"` -> `"Lucas Burliga"`
-/// - `"Alice Smith"` -> `"Alice Smith"`
+/// Currently this assumes that all names conform to the WCA spec, if someone submits an invalid name (i.e. with
+/// non-ascii parens or in the incorrect format, this could mangle the name in unintended ways.
 pub fn format_competitor_name(name: &str, print_one_name: bool) -> &str {
     if !print_one_name {
         return name;
@@ -152,7 +183,6 @@ struct RoundPlanningContext<'a, 'b> {
     target: &'b GenerationTarget,
     event: &'a Event,
     round: &'a Round,
-    event_name: &'static str,
     attempt_count: usize,
     activity_map: &'b FxHashMap<usize, ScheduledActivityInfo<'a>>,
     cover_sheets: bool,
@@ -167,7 +197,6 @@ type GroupMap<'a> = BTreeMap<GroupKey<'a>, Vec<ScorecardItem<'a>>>;
 fn collect_open_round_competitors<'a>(
     ctx: &RoundPlanningContext<'a, '_>,
 ) -> (GroupMap<'a>, usize, Vec<String>) {
-    let target_prefix = format!("{}-g", ctx.target.round_id);
     let comp_name = ctx.comp.display_name();
     let time_limit_info =
         TimeLimitInfo::from_wcif(ctx.round.time_limit.as_ref(), ctx.round.cutoff.as_ref());
@@ -175,12 +204,8 @@ fn collect_open_round_competitors<'a>(
         .comp
         .accepted_competitors_for_event(&ctx.event.id)
         .filter_map(|person| {
-            let assignment = resolve_assignment(
-                person,
-                ctx.activity_map,
-                &target_prefix,
-                &ctx.target.round_id,
-            );
+            let assignment =
+                resolve_assignment(person, ctx.activity_map, ctx.target.activity_code());
 
             let (group_num, station_num, stage_name) = match assignment {
                 Some(a) => a,
@@ -215,8 +240,7 @@ fn collect_open_round_competitors<'a>(
         |mut acc, (person, group_num, station_num, stage_name)| {
             let item = ScorecardItem::competitor(
                 comp_name,
-                &ctx.event.id,
-                ctx.event_name,
+                ctx.target.event,
                 ctx.target.round_number,
                 group_num,
                 stage_name,
@@ -262,7 +286,7 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
     let has_stage = ctx.cover_sheets && ctx.cover_sheets_by.contains(&CoverSheetBy::Stage);
 
     // Pre-calculate card counts per group (across all stages)
-    let mut group_totals: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut group_totals: FxHashMap<usize, usize> = FxHashMap::default();
     for ((group_num, _), cards) in &groups {
         *group_totals.entry(*group_num).or_default() += cards.len();
     }
@@ -271,8 +295,7 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
     if has_round && count > 0 {
         plan.items.push(ScorecardItem::cover_sheet(
             ctx.comp.display_name(),
-            &ctx.event.id,
-            ctx.event_name,
+            ctx.target.event,
             ctx.target.round_number,
             0,
             None,
@@ -294,8 +317,7 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
                 .unwrap_or(card_list.len());
             plan.items.push(ScorecardItem::cover_sheet(
                 ctx.comp.display_name(),
-                &ctx.event.id,
-                ctx.event_name,
+                ctx.target.event,
                 ctx.target.round_number,
                 group_num,
                 None,
@@ -310,8 +332,7 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
         if has_stage && (stage_name.is_some() || !has_group) {
             plan.items.push(ScorecardItem::cover_sheet(
                 ctx.comp.display_name(),
-                &ctx.event.id,
-                ctx.event_name,
+                ctx.target.event,
                 ctx.target.round_number,
                 group_num,
                 stage_name,
@@ -324,7 +345,7 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
     }
 
     plan.summaries.push(PlannedRoundSummary::OpenRound {
-        event_id: ctx.target.event_id.clone(),
+        event: ctx.target.event,
         round_number: ctx.target.round_number,
         competitor_count: count,
         sample_competitor_names: sample_names,
@@ -334,12 +355,7 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
 fn resolve_round_stage<'a>(ctx: &RoundPlanningContext<'a, '_>) -> Option<&'a str> {
     ctx.activity_map
         .values()
-        .find(|info| {
-            info.activity_code == ctx.target.round_id
-                || info
-                    .activity_code
-                    .starts_with(&format!("{}-g", ctx.target.round_id))
-        })
+        .find(|info| matches_round_activity(info.activity_code, ctx.target.activity_code()))
         .and_then(|info| info.room_name)
 }
 
@@ -359,8 +375,7 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
         if has_round {
             plan.items.push(ScorecardItem::cover_sheet(
                 comp_name,
-                &ctx.event.id,
-                ctx.event_name,
+                ctx.target.event,
                 ctx.target.round_number,
                 0,
                 None,
@@ -373,8 +388,7 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
         if has_group {
             plan.items.push(ScorecardItem::cover_sheet(
                 comp_name,
-                &ctx.event.id,
-                ctx.event_name,
+                ctx.target.event,
                 ctx.target.round_number,
                 1,
                 None,
@@ -387,8 +401,7 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
         if has_stage && (round_stage.is_some() || !has_group) {
             plan.items.push(ScorecardItem::cover_sheet(
                 comp_name,
-                &ctx.event.id,
-                ctx.event_name,
+                ctx.target.event,
                 ctx.target.round_number,
                 1,
                 round_stage,
@@ -401,8 +414,7 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
     plan.items.extend((0..adv_result.blank_count).map(|_| {
         ScorecardItem::blank(
             comp_name,
-            &ctx.event.id,
-            ctx.event_name,
+            ctx.target.event,
             ctx.target.round_number,
             1,
             round_stage,
@@ -412,11 +424,19 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
     }));
 
     plan.summaries.push(PlannedRoundSummary::SubsequentRound {
-        event_id: ctx.target.event_id.clone(),
+        event: ctx.target.event,
         round_number: ctx.target.round_number,
         blank_count: adv_result.blank_count,
         reason: adv_result.reason,
     });
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PlanConfig<'a> {
+    cover_sheets: bool,
+    cover_sheets_by: &'a [CoverSheetBy],
+    print_stations: bool,
+    print_one_name: bool,
 }
 
 /// Planner responsible for extracting competitor assignments, calculating advancement blanks, and sequencing scorecards.
@@ -426,6 +446,31 @@ impl ScorecardPlanner {
     /// Resolves all open round generation targets for the competition.
     pub fn resolve_all_targets(comp: &Competition) -> (Vec<GenerationTarget>, Vec<String>) {
         Self::resolve_targets::<&str>(comp, &[])
+    }
+
+    fn targets_for_event<'a>(
+        comp: &'a Competition,
+        activity_map: &'a FxHashMap<usize, ScheduledActivityInfo<'a>>,
+        event: &'a Event,
+    ) -> impl Iterator<Item = GenerationTarget> + 'a {
+        let wca_event = WcaEvent::from_id(&event.id);
+        event
+            .rounds
+            .iter()
+            .enumerate()
+            .filter_map(move |(idx, round)| {
+                let wca_event = wca_event?;
+                let round_number = idx + 1;
+                let round_activity = ActivityCode::round(wca_event, round_number);
+                let has_assignments =
+                    has_competitor_assignments(comp, activity_map, round_activity);
+                (round_number == 1 || has_assignments).then(|| GenerationTarget {
+                    event: wca_event,
+                    round_id: round.id.clone(),
+                    round_number,
+                    is_open_round: round_number == 1 || has_assignments,
+                })
+            })
     }
 
     /// Resolves generation targets from CLI arguments (or all open rounds if none specified), returning targets and any diagnostic notes.
@@ -438,91 +483,51 @@ impl ScorecardPlanner {
         let mut notes = Vec::new();
 
         if requested_events.is_empty() {
-            let targets: Vec<GenerationTarget> = comp
+            let targets = comp
                 .events
                 .iter()
                 .filter(|e| e.id != "333fm")
-                .flat_map(|event| {
-                    event
-                        .rounds
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(round_idx, round)| {
-                            let round_num = round_idx + 1;
-                            let has_assignments =
-                                has_competitor_assignments(comp, &activity_map, &round.id);
-                            if round_num == 1 || has_assignments {
-                                Some(GenerationTarget {
-                                    event_id: event.id.clone(),
-                                    round_id: round.id.clone(),
-                                    round_number: round_num,
-                                    is_open_round: round_num == 1 || has_assignments,
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                })
+                .flat_map(|event| Self::targets_for_event(comp, &activity_map, event))
                 .collect();
             return (targets, notes);
         }
 
-        let targets = requested_events
-            .iter()
-            .flat_map(|arg| {
-                let parsed = parse_event_arg(arg.as_ref());
-                if parsed.event_id == "333fm" {
-                    notes.push(
-                        "Skipping '333fm' (3x3x3 Fewest Moves) as it does not use scorecards."
-                            .to_string(),
-                    );
-                    return Vec::new();
-                }
+        let mut targets = Vec::new();
+        for arg in requested_events {
+            let Some(parsed) = parse_event_arg(arg.as_ref()) else {
+                continue;
+            };
+            if parsed.event == WcaEvent::E333Fm {
+                notes.push(
+                    "Skipping '333fm' (3x3x3 Fewest Moves) as it does not use scorecards."
+                        .to_string(),
+                );
+                continue;
+            }
 
-                let Some(event) = comp.events.iter().find(|e| e.id == parsed.event_id) else {
-                    return Vec::new();
-                };
+            let Some(event) = comp.events.iter().find(|e| e.id == parsed.event.code()) else {
+                continue;
+            };
 
-                match parsed.round_number {
-                    Some(r_num) => {
-                        let round_id = format!("{}-r{}", parsed.event_id, r_num);
-                        let has_assignments =
-                            has_competitor_assignments(comp, &activity_map, &round_id);
-                        vec![GenerationTarget {
-                            event_id: parsed.event_id.to_string(),
-                            round_id,
-                            round_number: r_num,
-                            is_open_round: r_num == 1 || has_assignments,
-                        }]
-                    }
-                    None => event
-                        .rounds
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(round_idx, round)| {
-                            let r_num = round_idx + 1;
-                            let has_assignments =
-                                has_competitor_assignments(comp, &activity_map, &round.id);
-                            if r_num == 1 || has_assignments {
-                                Some(GenerationTarget {
-                                    event_id: parsed.event_id.to_string(),
-                                    round_id: round.id.clone(),
-                                    round_number: r_num,
-                                    is_open_round: r_num == 1 || has_assignments,
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                }
-            })
-            .collect();
+            if let Some(r_num) = parsed.round_number {
+                let round_activity = ActivityCode::round(parsed.event, r_num);
+                let has_assignments =
+                    has_competitor_assignments(comp, &activity_map, round_activity);
+                targets.push(GenerationTarget {
+                    event: parsed.event,
+                    round_id: round_activity.round_id(),
+                    round_number: r_num,
+                    is_open_round: r_num == 1 || has_assignments,
+                });
+            } else {
+                targets.extend(Self::targets_for_event(comp, &activity_map, event));
+            }
+        }
 
         (targets, notes)
     }
 
-    /// Plans and builds all required scorecards for the competition given the requested events, cover sheet option, print_stations, and print_one_name flag.
+    /// Plans and builds all required scorecards for the competition given the requested events, cover sheet option, `print_stations`, and `print_one_name` flag.
     pub fn plan<'a, S: AsRef<str>>(
         comp: &'a Competition,
         requested_events: &[S],
@@ -534,38 +539,29 @@ impl ScorecardPlanner {
         let (targets, notes) = Self::resolve_targets(comp, requested_events);
         let activity_map = comp.build_activity_schedule_map();
         let mut plan = ScorecardPlan::new(notes);
+        let config = PlanConfig {
+            cover_sheets,
+            cover_sheets_by,
+            print_stations,
+            print_one_name,
+        };
 
         for target in &targets {
-            Self::plan_target_round(
-                comp,
-                target,
-                &activity_map,
-                cover_sheets,
-                cover_sheets_by,
-                print_stations,
-                print_one_name,
-                &mut plan,
-            )?;
+            Self::plan_target_round(comp, target, &activity_map, config, &mut plan)?;
         }
 
         plan.assign_scorecard_numbers();
         Ok(plan)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn plan_target_round<'a>(
         comp: &'a Competition,
         target: &GenerationTarget,
         activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
-        cover_sheets: bool,
-        cover_sheets_by: &[CoverSheetBy],
-        print_stations: bool,
-        print_one_name: bool,
+        config: PlanConfig<'_>,
         plan: &mut ScorecardPlan<'a>,
     ) -> Result<(), PlannerError> {
         let (event, round) = find_event_and_round(comp, target)?;
-        let event_name = event_name_by_id(&target.event_id)
-            .ok_or_else(|| PlannerError::UnsupportedEvent(target.event_id.clone()))?;
         let attempt_count = round.attempt_count();
 
         let ctx = RoundPlanningContext {
@@ -573,13 +569,12 @@ impl ScorecardPlanner {
             target,
             event,
             round,
-            event_name,
             attempt_count,
             activity_map,
-            cover_sheets,
-            cover_sheets_by,
-            print_stations,
-            print_one_name,
+            cover_sheets: config.cover_sheets,
+            cover_sheets_by: config.cover_sheets_by,
+            print_stations: config.print_stations,
+            print_one_name: config.print_one_name,
         };
 
         if target.is_open_round {

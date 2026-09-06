@@ -1,5 +1,7 @@
+use super::events::WcaEvent;
 use crate::wcif::{Cutoff, TimeLimit};
 use std::borrow::Cow;
+use std::fmt::Write as _;
 
 /// Compact, Copy-able metadata about a round's time limit and cutoff.
 /// Captures integer centiseconds and attempt counts without any heap allocations.
@@ -12,7 +14,7 @@ pub struct TimeLimitInfo {
 }
 
 impl TimeLimitInfo {
-    /// Creates a `TimeLimitInfo` from optional WCIF TimeLimit and Cutoff objects.
+    /// Creates a `TimeLimitInfo` from optional WCIF `TimeLimit` and Cutoff objects.
     /// Returns `None` if neither a time limit nor a cutoff is present.
     pub fn from_wcif(time_limit: Option<&TimeLimit>, cutoff: Option<&Cutoff>) -> Option<Self> {
         if time_limit.is_none() && cutoff.is_none() {
@@ -25,7 +27,7 @@ impl TimeLimitInfo {
                 .and_then(|tl| tl.cumulative_round_ids.as_ref())
                 .is_some_and(|ids| !ids.is_empty()),
             cutoff_centiseconds: cutoff.map(|c| c.attempt_result),
-            cutoff_attempts: cutoff.map(|c| c.number_of_attempts).unwrap_or(0),
+            cutoff_attempts: cutoff.map_or(0, |c| c.number_of_attempts),
         })
     }
 
@@ -43,51 +45,50 @@ impl TimeLimitInfo {
 
         if minutes > 0 {
             if cs > 0 {
-                format!("{}:{:02}.{:02}", minutes, seconds, cs)
+                format!("{minutes}:{seconds:02}.{cs:02}")
             } else {
-                format!("{}:{:02}.00", minutes, seconds)
+                format!("{minutes}:{seconds:02}.00")
             }
         } else {
-            format!("{}.{:02}", seconds, cs)
+            format!("{seconds}.{cs:02}")
         }
     }
 
     /// Formats the cutoff and time limit info into a display string for scorecard footers.
     pub fn format_display(&self) -> String {
-        let cutoff_part = self.cutoff_centiseconds.map(|cs| {
-            format!(
+        let mut s = String::new();
+        if let Some(cs) = self.cutoff_centiseconds {
+            let _ = write!(
+                s,
                 "Cutoff: < {} ({} att)",
                 Self::format_centiseconds(cs),
                 self.cutoff_attempts
-            )
-        });
+            );
+        }
 
-        let time_limit_part = self.limit_centiseconds.map(|cs| {
+        if let Some(cs) = self.limit_centiseconds {
+            if !s.is_empty() {
+                s.push_str("  |  ");
+            }
             let time_str = Self::format_centiseconds(cs);
             if self.is_cumulative {
-                format!("Time limit: {} cumulative", time_str)
+                let _ = write!(s, "Time limit: {time_str} cumulative");
             } else {
-                format!("Time limit: {}", time_str)
+                let _ = write!(s, "Time limit: {time_str}");
             }
-        });
-
-        match (cutoff_part, time_limit_part) {
-            (Some(c), Some(t)) => format!("{}  |  {}", c, t),
-            (Some(c), None) => c,
-            (None, Some(t)) => t,
-            (None, None) => String::new(),
         }
+
+        s
     }
 }
 
-/// ScorecardItem contains the data needed to render a single scorecard without heap allocations.
+/// `ScorecardItem` contains the data needed to render a single scorecard without heap allocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScorecardItem<'a> {
     pub scorecard_number: usize,
     pub station_number: Option<usize>,
     pub competition_name: &'a str,
-    pub event_id: &'a str,
-    pub event_name: &'static str,
+    pub event: WcaEvent,
     pub round_number: usize,
     pub group_number: usize,
     pub stage_name: Option<&'a str>,
@@ -108,8 +109,7 @@ impl Default for ScorecardItem<'static> {
             scorecard_number: 1,
             station_number: Some(1),
             competition_name: "Test Comp",
-            event_id: "333",
-            event_name: "3x3x3 Cube",
+            event: WcaEvent::E333,
             round_number: 1,
             group_number: 1,
             stage_name: Some("Main Stage"),
@@ -126,12 +126,23 @@ impl Default for ScorecardItem<'static> {
 }
 
 impl<'a> ScorecardItem<'a> {
+    /// Returns the standard WCA event ID string (e.g. `"333"`).
+    #[must_use]
+    pub const fn event_id(&self) -> &'static str {
+        self.event.code()
+    }
+
+    /// Returns the user-friendly display name of the event (e.g. `"3x3x3 Cube"`).
+    #[must_use]
+    pub const fn event_name(&self) -> &'static str {
+        self.event.display_name()
+    }
+
     /// Creates a competitor scorecard item for an open round.
     #[allow(clippy::too_many_arguments)]
     pub fn competitor(
         competition_name: &'a str,
-        event_id: &'a str,
-        event_name: &'static str,
+        event: WcaEvent,
         round_number: usize,
         group_number: usize,
         stage_name: Option<&'a str>,
@@ -146,8 +157,7 @@ impl<'a> ScorecardItem<'a> {
             scorecard_number: 0,
             station_number,
             competition_name,
-            event_id,
-            event_name,
+            event,
             round_number,
             group_number,
             stage_name,
@@ -166,8 +176,7 @@ impl<'a> ScorecardItem<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn cover_sheet(
         competition_name: &'a str,
-        event_id: &'a str,
-        event_name: &'static str,
+        event: WcaEvent,
         round_number: usize,
         group_number: usize,
         stage_name: Option<&'a str>,
@@ -178,8 +187,7 @@ impl<'a> ScorecardItem<'a> {
             scorecard_number: 0,
             station_number: None,
             competition_name,
-            event_id,
-            event_name,
+            event,
             round_number,
             group_number,
             stage_name,
@@ -198,8 +206,7 @@ impl<'a> ScorecardItem<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn blank(
         competition_name: &'a str,
-        event_id: &'a str,
-        event_name: &'static str,
+        event: WcaEvent,
         round_number: usize,
         group_number: usize,
         stage_name: Option<&'a str>,
@@ -210,8 +217,7 @@ impl<'a> ScorecardItem<'a> {
             scorecard_number: 0,
             station_number: None,
             competition_name,
-            event_id,
-            event_name,
+            event,
             round_number,
             group_number,
             stage_name,
@@ -244,7 +250,7 @@ impl<'a> ScorecardItem<'a> {
         }
     }
 
-    /// Returns truncated competition name if exceeding max_chars.
+    /// Returns truncated competition name if exceeding `max_chars`.
     pub fn truncated_competition_name(&self, max_chars: usize) -> Cow<'_, str> {
         if self.competition_name.chars().count() > max_chars {
             let truncated: String = self
@@ -252,7 +258,7 @@ impl<'a> ScorecardItem<'a> {
                 .chars()
                 .take(max_chars.saturating_sub(3))
                 .collect();
-            Cow::Owned(format!("{}...", truncated))
+            Cow::Owned(format!("{truncated}..."))
         } else {
             Cow::Borrowed(self.competition_name)
         }
@@ -268,13 +274,13 @@ impl<'a> ScorecardItem<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlannedRoundSummary {
     OpenRound {
-        event_id: String,
+        event: WcaEvent,
         round_number: usize,
         competitor_count: usize,
         sample_competitor_names: Vec<String>,
     },
     SubsequentRound {
-        event_id: String,
+        event: WcaEvent,
         round_number: usize,
         blank_count: usize,
         reason: String,
@@ -286,7 +292,7 @@ impl PlannedRoundSummary {
     pub fn format(&self) -> String {
         match self {
             Self::OpenRound {
-                event_id,
+                event,
                 round_number,
                 competitor_count,
                 sample_competitor_names,
@@ -296,23 +302,22 @@ impl PlannedRoundSummary {
                 } else {
                     "(Assigned Competitors)"
                 };
+                let event_id = event.code();
                 let mut s = format!(
                     "[{event_id} Round {round_number}] {round_type} -> Generating scorecards for {competitor_count} accepted competitors\n"
                 );
                 if *competitor_count <= 5 && *competitor_count > 0 {
-                    s.push_str(&format!(
-                        "   Competitors: {}\n",
-                        sample_competitor_names.join(", ")
-                    ));
+                    let _ = writeln!(s, "   Competitors: {}", sample_competitor_names.join(", "));
                 }
                 s
             }
             Self::SubsequentRound {
-                event_id,
+                event,
                 round_number,
                 blank_count,
                 reason,
             } => {
+                let event_id = event.code();
                 format!(
                     "[{event_id} Round {round_number}] (Subsequent Round) -> Generating {blank_count} blank scorecards ({reason})\n"
                 )
@@ -321,7 +326,7 @@ impl PlannedRoundSummary {
     }
 }
 
-/// ScorecardPlan contains all generated scorecard items along with round summaries and diagnostic notes.
+/// `ScorecardPlan` contains all generated scorecard items along with round summaries and diagnostic notes.
 #[derive(Debug, Clone, Default)]
 pub struct ScorecardPlan<'a> {
     pub items: Vec<ScorecardItem<'a>>,
@@ -329,7 +334,7 @@ pub struct ScorecardPlan<'a> {
     pub notes: Vec<String>,
 }
 
-impl<'a> ScorecardPlan<'a> {
+impl ScorecardPlan<'_> {
     pub fn new(notes: Vec<String>) -> Self {
         Self {
             items: Vec::new(),
@@ -349,11 +354,11 @@ impl<'a> ScorecardPlan<'a> {
     pub fn assign_scorecard_numbers(&mut self) {
         let mut num = 1;
         for card in &mut self.items {
-            if !card.is_cover_sheet {
+            if card.is_cover_sheet {
+                card.scorecard_number = 0;
+            } else {
                 card.scorecard_number = num;
                 num += 1;
-            } else {
-                card.scorecard_number = 0;
             }
         }
     }
@@ -361,6 +366,7 @@ impl<'a> ScorecardPlan<'a> {
     /// Formats the plan summary as a readable table with Event, Round, Status, and Competitors columns.
     pub fn format_summary(&self) -> String {
         let mut lines = Vec::new();
+        let mut row_buf = String::new();
 
         for note in &self.notes {
             lines.push(format!("Note: {note}"));
@@ -381,9 +387,10 @@ impl<'a> ScorecardPlan<'a> {
             ));
 
             for summary in &self.summaries {
+                row_buf.clear();
                 match summary {
                     PlannedRoundSummary::OpenRound {
-                        event_id,
+                        event,
                         round_number,
                         competitor_count,
                         ..
@@ -393,26 +400,27 @@ impl<'a> ScorecardPlan<'a> {
                         } else {
                             "Assigned"
                         };
-                        let competitors = competitor_count.to_string();
-                        lines.push(format!(
-                            "{:<10} {:<10} {:<12} {}",
-                            event_id, round_number, status, competitors
-                        ));
+                        let event_id = event.code();
+                        let _ = write!(
+                            row_buf,
+                            "{event_id:<10} {round_number:<10} {status:<12} {competitor_count}"
+                        );
                     }
                     PlannedRoundSummary::SubsequentRound {
-                        event_id,
+                        event,
                         round_number,
                         blank_count,
                         reason,
                     } => {
                         let status = "Subsequent";
-                        let competitors = format!("{blank_count} blank ({reason})");
-                        lines.push(format!(
-                            "{:<10} {:<10} {:<12} {}",
-                            event_id, round_number, status, competitors
-                        ));
+                        let event_id = event.code();
+                        let _ = write!(
+                            row_buf,
+                            "{event_id:<10} {round_number:<10} {status:<12} {blank_count} blank ({reason})"
+                        );
                     }
                 }
+                lines.push(row_buf.clone());
             }
         }
 
@@ -420,7 +428,7 @@ impl<'a> ScorecardPlan<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for ScorecardPlan<'a> {
+impl std::fmt::Display for ScorecardPlan<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.format_summary())
     }

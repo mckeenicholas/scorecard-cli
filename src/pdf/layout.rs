@@ -120,7 +120,7 @@ impl PaperSize {
     const MM_TO_PT: f32 = 2.834_645_7;
 
     /// Physical paper dimensions in millimeters (width, height).
-    pub fn dimensions_mm(&self) -> (f32, f32) {
+    pub fn dimensions_mm(self) -> (f32, f32) {
         match self {
             PaperSize::A6 => Self::A6_MM,
             PaperSize::A4 => Self::A4_MM,
@@ -133,12 +133,12 @@ impl PaperSize {
     }
 
     /// Physical paper dimensions in PostScript points (width, height).
-    pub fn dimensions_pt(&self) -> (f32, f32) {
+    pub fn dimensions_pt(self) -> (f32, f32) {
         Self::to_ps(self.dimensions_mm())
     }
 
     /// Number of scorecard cards printable per sheet for this paper size.
-    pub fn cards_per_page(&self) -> usize {
+    pub fn cards_per_page(self) -> usize {
         match self {
             PaperSize::A6 => 1,
             PaperSize::A4 | PaperSize::Letter => 4,
@@ -213,7 +213,7 @@ impl RectSpec {
     }
 }
 
-/// PageLayout encapsulates paper geometry and scorecard positioning grid math.
+/// `PageLayout` encapsulates paper geometry and scorecard positioning grid math.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageLayout {
     pub paper_size: PaperSize,
@@ -231,7 +231,7 @@ pub struct PageLayout {
 }
 
 impl PageLayout {
-    /// Creates a PageLayout configuration from a PaperSize enum.
+    /// Creates a `PageLayout` configuration from a `PaperSize` enum.
     pub fn new(paper_size: PaperSize) -> Self {
         let (page_w_mm, page_h_mm) = paper_size.dimensions_mm();
         let (page_w_pt, page_h_pt) = paper_size.dimensions_pt();
@@ -256,7 +256,7 @@ impl PageLayout {
         }
     }
 
-    /// Returns the bounding box rectangle for the card at index `idx` on the current page (0..cards_per_page).
+    /// Returns the bounding box rectangle for the card at index `idx` on the current page (`0..cards_per_page`).
     pub fn card_rect(&self, idx: usize) -> RectSpec {
         if self.cards_per_page == 1 {
             self.single_card_rect()
