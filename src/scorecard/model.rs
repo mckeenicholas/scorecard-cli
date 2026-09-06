@@ -3,13 +3,168 @@ use crate::wcif::{Cutoff, TimeLimit};
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
+/// Error returned when attempting to construct a [`WcaResult`] with an invalid value (< -2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidWcaResult(pub isize);
+
+impl std::fmt::Display for InvalidWcaResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "invalid WCA result: {} centiseconds (values < -2 are not allowed)",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidWcaResult {}
+
+/// Represents a WCA attempt result or time (in centiseconds >= -2).
+///
+/// Invariants:
+/// - `-2`: DNS (Did Not Start)
+/// - `-1`: DNF (Did Not Finish)
+/// - `0`: Skipped / No attempt
+/// - `> 0`: Valid solve time in centiseconds
+///
+/// Values `< -2` are disallowed and rejected by constructors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct WcaResult(isize);
+
+impl WcaResult {
+    pub const DNF: Self = Self(-1);
+    pub const DNS: Self = Self(-2);
+
+    /// Constructs a `WcaResult` if `centiseconds >= -2`.
+    /// Returns `None` if `centiseconds < -2`.
+    #[inline]
+    pub const fn new(centiseconds: isize) -> Option<Self> {
+        if centiseconds < -2 {
+            None
+        } else {
+            Some(Self(centiseconds))
+        }
+    }
+
+    /// Constructs a `WcaResult` if `centiseconds >= -2`.
+    /// Returns `Err(InvalidWcaResult)` if `centiseconds < -2`.
+    #[inline]
+    pub const fn try_new(centiseconds: isize) -> Result<Self, InvalidWcaResult> {
+        if centiseconds < -2 {
+            Err(InvalidWcaResult(centiseconds))
+        } else {
+            Ok(Self(centiseconds))
+        }
+    }
+
+    #[inline]
+    pub const fn centiseconds(self) -> isize {
+        self.0
+    }
+
+    #[inline]
+    pub const fn is_valid_time(self) -> bool {
+        self.0 > 0
+    }
+
+    #[inline]
+    pub const fn is_dnf(self) -> bool {
+        self.0 == -1
+    }
+
+    #[inline]
+    pub const fn is_dns(self) -> bool {
+        self.0 == -2
+    }
+
+    /// Constructs a `WcaResult` only for strictly positive times (centiseconds > 0).
+    /// Returns `None` for sentinels (<= 0) or invalid values.
+    #[inline]
+    pub const fn from_centiseconds(centis: isize) -> Option<Self> {
+        if centis > 0 { Some(Self(centis)) } else { None }
+    }
+}
+
+impl TryFrom<isize> for WcaResult {
+    type Error = InvalidWcaResult;
+
+    #[inline]
+    fn try_from(centis: isize) -> Result<Self, Self::Error> {
+        Self::try_new(centis)
+    }
+}
+
+impl std::ops::Deref for WcaResult {
+    type Target = isize;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl PartialEq<isize> for WcaResult {
+    #[inline]
+    fn eq(&self, other: &isize) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<WcaResult> for isize {
+    #[inline]
+    fn eq(&self, other: &WcaResult) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialOrd<isize> for WcaResult {
+    #[inline]
+    fn partial_cmp(&self, other: &isize) -> Option<std::cmp::Ordering> {
+        self.0.partial_cmp(other)
+    }
+}
+
+impl PartialOrd<WcaResult> for isize {
+    #[inline]
+    fn partial_cmp(&self, other: &WcaResult) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(&other.0)
+    }
+}
+
+impl std::fmt::Display for WcaResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 <= 0 {
+            return match self.0 {
+                -1 => write!(f, "DNF"),
+                -2 => write!(f, "DNS"),
+                _ => write!(f, "None"),
+            };
+        }
+
+        let total_seconds = self.0 / 100;
+        let cs = self.0 % 100;
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+
+        if minutes > 0 {
+            if cs > 0 {
+                write!(f, "{minutes}:{seconds:02}.{cs:02}")
+            } else {
+                write!(f, "{minutes}:{seconds:02}.00")
+            }
+        } else {
+            write!(f, "{seconds}.{cs:02}")
+        }
+    }
+}
+
 /// Compact, Copy-able metadata about a round's time limit and cutoff.
-/// Captures integer centiseconds and attempt counts without any heap allocations.
+/// Captures WCA results and attempt counts without any heap allocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TimeLimitInfo {
-    pub limit_centiseconds: Option<isize>,
+    pub limit_centiseconds: Option<WcaResult>,
     pub is_cumulative: bool,
-    pub cutoff_centiseconds: Option<isize>,
+    pub cutoff_centiseconds: Option<WcaResult>,
     pub cutoff_attempts: usize,
 }
 
@@ -22,59 +177,40 @@ impl TimeLimitInfo {
         }
 
         Some(Self {
-            limit_centiseconds: time_limit.map(|tl| tl.centiseconds),
+            limit_centiseconds: time_limit.and_then(|tl| WcaResult::new(tl.centiseconds)),
             is_cumulative: time_limit
                 .and_then(|tl| tl.cumulative_round_ids.as_ref())
                 .is_some_and(|ids| !ids.is_empty()),
-            cutoff_centiseconds: cutoff.map(|c| c.attempt_result),
+            cutoff_centiseconds: cutoff.and_then(|c| WcaResult::new(c.attempt_result)),
             cutoff_attempts: cutoff.map_or(0, |c| c.number_of_attempts),
         })
     }
 
     /// Formats centiseconds into a human-readable time string (e.g. "1:30.50").
-    /// Returns "None" for values <= 0 (covers WCA sentinels: -1 = DNF, -2 = DNS).
-    pub fn format_centiseconds(centis: isize) -> String {
+    /// Returns `None` for values <= 0 (covers WCA sentinels: -1 = DNF, -2 = DNS).
+    pub fn format_centiseconds(centis: isize) -> Option<String> {
         if centis <= 0 {
-            return "None".to_string();
-        }
-
-        let total_seconds = centis / 100;
-        let cs = centis % 100;
-        let minutes = total_seconds / 60;
-        let seconds = total_seconds % 60;
-
-        if minutes > 0 {
-            if cs > 0 {
-                format!("{minutes}:{seconds:02}.{cs:02}")
-            } else {
-                format!("{minutes}:{seconds:02}.00")
-            }
+            None
         } else {
-            format!("{seconds}.{cs:02}")
+            WcaResult::new(centis).map(|r| r.to_string())
         }
     }
 
     /// Formats the cutoff and time limit info into a display string for scorecard footers.
     pub fn format_display(&self) -> String {
-        let mut s = String::new();
-        if let Some(cs) = self.cutoff_centiseconds {
-            let _ = write!(
-                s,
-                "Cutoff: < {} ({} att)",
-                Self::format_centiseconds(cs),
-                self.cutoff_attempts
-            );
+        let mut s = String::with_capacity(48);
+        if let Some(cutoff) = self.cutoff_centiseconds {
+            let _ = write!(s, "Cutoff: < {cutoff} ({} att)", self.cutoff_attempts);
         }
 
-        if let Some(cs) = self.limit_centiseconds {
+        if let Some(limit) = self.limit_centiseconds {
             if !s.is_empty() {
                 s.push_str("  |  ");
             }
-            let time_str = Self::format_centiseconds(cs);
             if self.is_cumulative {
-                let _ = write!(s, "Time limit: {time_str} cumulative");
+                let _ = write!(s, "Time limit: {limit} cumulative");
             } else {
-                let _ = write!(s, "Time limit: {time_str}");
+                let _ = write!(s, "Time limit: {limit}");
             }
         }
 
@@ -253,12 +389,14 @@ impl<'a> ScorecardItem<'a> {
     /// Returns truncated competition name if exceeding `max_chars`.
     pub fn truncated_competition_name(&self, max_chars: usize) -> Cow<'_, str> {
         if self.competition_name.chars().count() > max_chars {
-            let truncated: String = self
-                .competition_name
-                .chars()
-                .take(max_chars.saturating_sub(3))
-                .collect();
-            Cow::Owned(format!("{truncated}..."))
+            let mut s = String::with_capacity(max_chars);
+            s.extend(
+                self.competition_name
+                    .chars()
+                    .take(max_chars.saturating_sub(3)),
+            );
+            s.push_str("...");
+            Cow::Owned(s)
         } else {
             Cow::Borrowed(self.competition_name)
         }
@@ -307,7 +445,14 @@ impl PlannedRoundSummary {
                     "[{event_id} Round {round_number}] {round_type} -> Generating scorecards for {competitor_count} accepted competitors\n"
                 );
                 if *competitor_count <= 5 && *competitor_count > 0 {
-                    let _ = writeln!(s, "   Competitors: {}", sample_competitor_names.join(", "));
+                    let _ = write!(s, "   Competitors: ");
+                    for (i, name) in sample_competitor_names.iter().enumerate() {
+                        if i > 0 {
+                            s.push_str(", ");
+                        }
+                        s.push_str(name);
+                    }
+                    s.push('\n');
                 }
                 s
             }
@@ -373,18 +518,8 @@ impl ScorecardPlan<'_> {
         }
 
         if !self.summaries.is_empty() {
-            let sep_char = '─';
-            lines.push(format!(
-                "{:<10} {:<10} {:<12} {}",
-                "Event", "Round", "Status", "Competitors"
-            ));
-            lines.push(format!(
-                "{:<10} {:<10} {:<12} {}",
-                sep_char.to_string().repeat(8),
-                sep_char.to_string().repeat(8),
-                sep_char.to_string().repeat(10),
-                sep_char.to_string().repeat(14),
-            ));
+            lines.push("Event      Round      Status       Competitors".to_string());
+            lines.push("────────   ────────   ──────────   ──────────────".to_string());
 
             for summary in &self.summaries {
                 row_buf.clear();

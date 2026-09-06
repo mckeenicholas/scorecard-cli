@@ -6,6 +6,7 @@ mod scorecard;
 mod wcif;
 
 use clap::Parser;
+use crossterm::style::Stylize;
 use mimalloc::MiMalloc;
 use options::{Cli, ResolvedOptions, SplitBy};
 use pdf::{PageLayout, PdfGenerationError, PdfGenerator};
@@ -23,9 +24,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 const BUFFER_SIZE: usize = 16 * 1024 * 1024; // 16 MB
 
 fn slugify(s: &str) -> String {
-    let lower = s.to_lowercase();
-    let mut slug = String::with_capacity(lower.len());
-    for c in lower.chars() {
+    let mut slug = String::with_capacity(s.len());
+    for c in s.chars().flat_map(char::to_lowercase) {
         if c.is_alphanumeric() {
             slug.push(c);
         } else if (c.is_whitespace() || c == '-' || c == '_')
@@ -35,7 +35,10 @@ fn slugify(s: &str) -> String {
             slug.push('-');
         }
     }
-    slug.trim_end_matches('-').to_string()
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    slug
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -47,7 +50,8 @@ struct SplitKey {
 
 impl SplitKey {
     fn to_filename(&self, comp_id: &str) -> String {
-        let mut name = format!("{comp_id}-scorecards");
+        let mut name = String::with_capacity(comp_id.len() + 48);
+        let _ = write!(name, "{comp_id}-scorecards");
         if let Some(ref stage) = self.stage {
             name.push('-');
             name.push_str(stage);
@@ -348,7 +352,7 @@ fn write_and_report_partition(
     is_multi: bool,
 ) -> Result<usize, AppError> {
     let page_count = write_pdf_file(generator, comp, out_filename, partition_cards)?;
-    let icon = "✔";
+    let icon = "✔".green();
     let scorecards_word = if partition_cards.len() == 1 {
         "scorecard"
     } else {
@@ -358,7 +362,7 @@ fn write_and_report_partition(
     if is_multi {
         println!(
             "  {icon} Generated {} ({} {}, {} {})",
-            out_filename,
+            out_filename.cyan(),
             partition_cards.len(),
             scorecards_word,
             page_count,
@@ -367,7 +371,7 @@ fn write_and_report_partition(
     } else {
         println!(
             "{icon} Successfully generated scorecards PDF: {} ({} {}, {} {})",
-            out_filename,
+            out_filename.cyan(),
             partition_cards.len(),
             scorecards_word,
             page_count,

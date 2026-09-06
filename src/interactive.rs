@@ -348,8 +348,13 @@ fn format_wca_suggestion(
     country_iso2: Option<&str>,
     id_width: usize,
 ) -> String {
-    let country = country_iso2.map(|c| format!(" ({c})")).unwrap_or_default();
-    format!("{id:<id_width$}  {name}{country}")
+    use std::fmt::Write as FmtWrite;
+    let mut s = String::with_capacity(id_width.max(id.len()) + name.len() + 10);
+    let _ = write!(s, "{id:<id_width$}  {name}");
+    if let Some(c) = country_iso2 {
+        let _ = write!(s, " ({c})");
+    }
+    s
 }
 
 struct SharedSearchState {
@@ -493,11 +498,18 @@ fn render_search_widget<W: Write>(
             queue!(
                 out,
                 style::SetForegroundColor(style::Color::Cyan),
-                style::Print(format!("  > {}\r\n", item.display)),
+                style::Print("  > "),
+                style::Print(&item.display),
+                style::Print("\r\n"),
                 style::ResetColor,
             )?;
         } else {
-            queue!(out, style::Print(format!("    {}\r\n", item.display)))?;
+            queue!(
+                out,
+                style::Print("    "),
+                style::Print(&item.display),
+                style::Print("\r\n"),
+            )?;
         }
         lines_rendered += 1;
     }

@@ -1,5 +1,6 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use std::borrow::Cow;
+use std::fmt::Write;
 use std::time::Duration;
 
 /// Tick interval for loading spinners (80ms creates a smooth ~12.5 FPS animation).
@@ -21,56 +22,56 @@ pub fn create_spinner(message: impl Into<Cow<'static, str>>) -> ProgressBar {
     spinner
 }
 
+/// Calculates the visible display width of a string by stripping ANSI escape sequences.
+pub fn visible_width(s: &str) -> usize {
+    let mut width = 0;
+    let mut in_escape = false;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c.is_ascii_alphabetic() {
+                in_escape = false;
+            }
+        } else {
+            width += 1;
+        }
+    }
+    width
+}
+
 /// Formats a list of content lines into a rounded box card with a title.
 pub fn draw_box(title: &str, content_lines: &[String]) -> String {
-    let (tl, tr, bl, br, h, v) = ('╭', '╮', '╰', '╯', '─', '│');
-
+    let title_chars = title.chars().count();
     let content_width = content_lines
         .iter()
-        .map(|l| l.chars().count())
+        .map(|l| visible_width(l))
         .max()
         .unwrap_or(36)
-        .max(title.chars().count() + 4)
+        .max(title_chars + 4)
         .max(46);
 
     let inner_width = content_width + 2;
+    let remaining = inner_width.saturating_sub(title_chars + 3);
 
-    let mut out = String::new();
+    // Box-drawing characters ('─', '│', corners) are 3 bytes each in UTF-8.
+    // Account for 3-byte horizontal borders plus line text, padding, and ANSI codes.
+    let border_bytes = (inner_width * 3 + 4) * 2;
+    let content_bytes = content_lines.iter().map(|l| l.len() + 16).sum::<usize>();
+    let est_size = border_bytes + content_bytes;
+    let mut out = String::with_capacity(est_size);
 
     // Top border: ╭─ Title ──────...──╮
-    out.push(tl);
-    out.push(h);
-    out.push(' ');
-    out.push_str(title);
-    out.push(' ');
-    let remaining = inner_width.saturating_sub(title.chars().count() + 3);
-    for _ in 0..remaining {
-        out.push(h);
-    }
-    out.push(tr);
-    out.push('\n');
+    let _ = writeln!(out, "╭─ {title} {:─<remaining$}╮", "");
 
-    // Content lines
+    // Content lines: │ Content... │
     for line in content_lines {
-        out.push(v);
-        out.push(' ');
-        out.push_str(line);
-        let pad = content_width.saturating_sub(line.chars().count());
-        for _ in 0..pad {
-            out.push(' ');
-        }
-        out.push(' ');
-        out.push(v);
-        out.push('\n');
+        let pad = content_width.saturating_sub(visible_width(line));
+        let _ = writeln!(out, "│ {line}{:pad$} │", "");
     }
 
     // Bottom border: ╰────────...──╯
-    out.push(bl);
-    for _ in 0..inner_width {
-        out.push(h);
-    }
-    out.push(br);
-    out.push('\n');
+    let _ = writeln!(out, "╰{:─<inner_width$}╯", "");
 
     out
 }
@@ -95,5 +96,21 @@ mod tests {
         assert!(card.contains("╭─ Header"));
         assert!(card.contains("│ Item 1: Hello"));
         assert!(card.contains('╰'));
+    }
+
+    #[test]
+    fn test_draw_box_ansi_alignment() {
+        let lines = vec![
+            "Plain text line".to_string(),
+            "\x1b[32m✔\x1b[0m - Option with green check".to_string(),
+            "\x1b[31m✖\x1b[0m - Option with red cross".to_string(),
+        ];
+        let card = draw_box("ANSI Test", &lines);
+        let card_lines: Vec<&str> = card.lines().collect();
+        assert_eq!(card_lines.len(), 5);
+        let expected_visible_width = visible_width(card_lines[0]);
+        for line in &card_lines {
+            assert_eq!(visible_width(line), expected_visible_width);
+        }
     }
 }

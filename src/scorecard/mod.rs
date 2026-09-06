@@ -3,6 +3,8 @@ pub mod model;
 pub mod planner;
 
 pub use events::WcaEvent;
+#[allow(unused_imports)]
+pub use model::{InvalidWcaResult, WcaResult};
 pub use model::{ScorecardItem, TimeLimitInfo};
 pub use planner::{PlannerError, ScorecardPlanner};
 
@@ -98,9 +100,9 @@ mod tests {
             wca_id: Some("2022SMIT01"),
             attempt_count: 5,
             time_limit_info: Some(TimeLimitInfo {
-                limit_centiseconds: Some(30000),
+                limit_centiseconds: WcaResult::new(30000),
                 is_cumulative: false,
-                cutoff_centiseconds: Some(6000),
+                cutoff_centiseconds: WcaResult::new(6000),
                 cutoff_attempts: 2,
             }),
             is_blank: false,
@@ -168,8 +170,8 @@ mod tests {
         };
 
         let info = TimeLimitInfo::from_wcif(Some(&tl), Some(&cutoff)).unwrap();
-        assert_eq!(info.limit_centiseconds, Some(60000));
-        assert_eq!(info.cutoff_centiseconds, Some(4500));
+        assert_eq!(info.limit_centiseconds, WcaResult::new(60000));
+        assert_eq!(info.cutoff_centiseconds, WcaResult::new(4500));
         assert_eq!(info.cutoff_attempts, 2);
         assert!(!info.is_cumulative);
         assert_eq!(
@@ -186,6 +188,66 @@ mod tests {
         assert_eq!(info_cum.format_display(), "Time limit: 5:00.00 cumulative");
 
         assert_eq!(TimeLimitInfo::from_wcif(None, None), None);
+    }
+
+    #[test]
+    fn test_wca_result_display_and_helpers() {
+        assert_eq!(format!("{}", WcaResult::new(60000).unwrap()), "10:00.00");
+        assert_eq!(format!("{}", WcaResult::new(9050).unwrap()), "1:30.50");
+        assert_eq!(format!("{}", WcaResult::new(4500).unwrap()), "45.00");
+        assert_eq!(format!("{}", WcaResult::new(805).unwrap()), "8.05");
+        assert_eq!(format!("{}", WcaResult::DNF), "DNF");
+        assert_eq!(format!("{}", WcaResult::DNS), "DNS");
+        assert_eq!(format!("{}", WcaResult::new(0).unwrap()), "None");
+
+        // Values < -2 are rejected by new()
+        assert_eq!(WcaResult::new(-3), None);
+        assert_eq!(WcaResult::new(-5), None);
+        assert_eq!(WcaResult::new(-100), None);
+        assert!(WcaResult::new(-2).is_some());
+        assert!(WcaResult::new(-1).is_some());
+
+        // try_new and TryFrom validation
+        assert_eq!(
+            WcaResult::try_new(60000),
+            Ok(WcaResult::new(60000).unwrap())
+        );
+        assert_eq!(WcaResult::try_new(-2), Ok(WcaResult::DNS));
+        assert_eq!(WcaResult::try_new(-1), Ok(WcaResult::DNF));
+        assert_eq!(WcaResult::try_new(-3), Err(InvalidWcaResult(-3)));
+        assert_eq!(WcaResult::try_from(-5), Err(InvalidWcaResult(-5)));
+        assert_eq!(
+            InvalidWcaResult(-5).to_string(),
+            "invalid WCA result: -5 centiseconds (values < -2 are not allowed)"
+        );
+
+        let res = WcaResult::new(4500).unwrap();
+        assert_eq!(res.centiseconds(), 4500);
+        assert!(*res == 4500); // Deref<Target = isize>
+        assert_eq!(res, 4500); // PartialEq<isize>
+        assert_eq!(4500, res); // PartialEq<WcaResult> for isize
+        assert!(res < 5000); // PartialOrd<isize>
+        assert!(5000 > res); // PartialOrd<WcaResult> for isize
+        assert!(res.is_valid_time());
+        assert!(!res.is_dnf());
+        assert!(!res.is_dns());
+
+        assert!(WcaResult::DNF.is_dnf());
+        assert!(!WcaResult::DNF.is_valid_time());
+        assert!(WcaResult::DNS.is_dns());
+        assert!(!WcaResult::DNS.is_valid_time());
+
+        assert_eq!(WcaResult::from_centiseconds(4500), WcaResult::new(4500));
+        assert_eq!(WcaResult::from_centiseconds(0), None);
+        assert_eq!(WcaResult::from_centiseconds(-1), None);
+
+        assert_eq!(
+            TimeLimitInfo::format_centiseconds(9050),
+            Some("1:30.50".to_string())
+        );
+        assert_eq!(TimeLimitInfo::format_centiseconds(0), None);
+        assert_eq!(TimeLimitInfo::format_centiseconds(-1), None);
+        assert_eq!(TimeLimitInfo::format_centiseconds(-3), None);
     }
 
     #[test]
@@ -572,11 +634,11 @@ mod tests {
         );
         assert_eq!(
             card1.time_limit_info.unwrap().cutoff_centiseconds,
-            Some(4500)
+            WcaResult::new(4500)
         );
         assert_eq!(
             card1.time_limit_info.unwrap().limit_centiseconds,
-            Some(60000)
+            WcaResult::new(60000)
         );
 
         // Plan Round 2 (advancement blanks)

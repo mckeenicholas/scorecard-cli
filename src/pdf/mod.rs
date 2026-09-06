@@ -8,7 +8,7 @@ pub use layout::{PageFormat, PageLayout, PaperSize};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scorecard::{ScorecardItem, TimeLimitInfo, WcaEvent};
+    use crate::scorecard::{ScorecardItem, TimeLimitInfo, WcaEvent, WcaResult};
     use crate::wcif::Competition;
 
     #[test]
@@ -38,7 +38,7 @@ mod tests {
                 wca_id: Some("2022SMIT01"),
                 attempt_count: 5,
                 time_limit_info: Some(TimeLimitInfo {
-                    limit_centiseconds: Some(60000),
+                    limit_centiseconds: WcaResult::new(60000),
                     is_cumulative: false,
                     cutoff_centiseconds: None,
                     cutoff_attempts: 0,

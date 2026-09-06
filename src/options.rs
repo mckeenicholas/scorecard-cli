@@ -1,6 +1,7 @@
 use crate::pdf::{PageFormat, PaperSize};
 use crate::wcif::GroupifierCompetitionConfig;
 use clap::{Parser, ValueEnum};
+use crossterm::style::Stylize;
 use serde::{Deserialize, Serialize};
 
 /// Criteria for splitting output PDFs into separate files.
@@ -467,64 +468,95 @@ impl ResolvedOptions {
 
     /// Formats a human-readable configuration summary table inside a modern card.
     pub fn format_summary(&self) -> String {
-        let mut lines = Vec::new();
+        use std::fmt::Write;
 
-        lines.push(format!("Paper Size:                  {}", self.paper));
-        lines.push(format!("Format:                      {}", self.format));
+        let green_check = "✔".green();
+        let red_x = "✖".red();
 
+        let mut lines = Vec::with_capacity(5);
+        let mut buf = String::with_capacity(36);
+        let _ = write!(buf, "{:28}{}", "Paper Size:", self.paper);
+        lines.push(buf);
+
+        let mut buf = String::with_capacity(36);
+        let _ = write!(buf, "{:28}{}", "Format:", self.format);
+        lines.push(buf);
+
+        // Cover Sheets
         if self.cover_sheets {
-            let by = if self.cover_sheets_by.is_empty() {
-                "(none)".to_string()
+            if self.cover_sheets_by.is_empty() {
+                let mut buf = String::with_capacity(36);
+                let _ = write!(buf, "{:28}{green_check}", "Cover Sheets:");
+                lines.push(buf);
             } else {
-                self.cover_sheets_by
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-            lines.push(format!("Cover Sheets:                true (by: {by})"));
+                let mut buf = String::with_capacity(64);
+                let _ = write!(buf, "{:28}{green_check} - ", "Cover Sheets:");
+                for (i, by) in self.cover_sheets_by.iter().enumerate() {
+                    if i > 0 {
+                        buf.push_str(", ");
+                    }
+                    let _ = write!(buf, "{by}");
+                }
+                lines.push(buf);
+            }
         } else {
-            lines.push("Cover Sheets:                false".to_string());
+            let mut buf = String::with_capacity(36);
+            let _ = write!(buf, "{:28}{red_x}", "Cover Sheets:");
+            lines.push(buf);
         }
 
+        // Split PDFs
         if self.split.is_empty() {
-            lines.push("Split PDFs:                  (No - Single PDF)".to_string());
+            let mut buf = String::with_capacity(36);
+            let _ = write!(buf, "{:28}{red_x}", "Split PDFs:");
+            lines.push(buf);
         } else {
-            let splits = self
-                .split
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            lines.push(format!("Split PDFs:                  {splits}"));
+            let mut buf = String::with_capacity(64);
+            let _ = write!(buf, "{:28}{green_check} - ", "Split PDFs:");
+            for (i, split) in self.split.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                let _ = write!(buf, "{split}");
+            }
+            lines.push(buf);
         }
 
-        // Only display active (enabled) extra flags to keep the table clean and focused
-        let mut active_flags = Vec::new();
-        if self.local_names_first {
-            active_flags.push("Local Names First");
-        }
-        if self.print_one_name {
-            active_flags.push("Print One Name");
-        }
-        if self.print_stations {
-            active_flags.push("Print Stations (Station #)");
-        }
-        if self.scramble_checker_top_ranked {
-            active_flags.push("Scramble Chk Top Ranked");
-        }
-        if self.scramble_checker_final_rounds {
-            active_flags.push("Scramble Chk Final Rounds");
-        }
-        if self.scramble_checker_blank {
-            active_flags.push("Scramble Chk Blank Cards");
-        }
+        // Active Options
+        let flags: &[(&str, bool)] = &[
+            ("Local Names First", self.local_names_first),
+            ("Print One Name", self.print_one_name),
+            ("Print Stations", self.print_stations),
+            (
+                "Scramble Check Top Ranked",
+                self.scramble_checker_top_ranked,
+            ),
+            (
+                "Scramble Check Final Rounds",
+                self.scramble_checker_final_rounds,
+            ),
+            ("Scramble Check Blank Cards", self.scramble_checker_blank),
+        ];
 
-        if !active_flags.is_empty() {
-            lines.push(format!(
-                "Active Options:              {}",
-                active_flags.join(", ")
-            ));
+        let active: Vec<&str> = flags
+            .iter()
+            .filter_map(|&(name, active)| active.then_some(name))
+            .collect();
+
+        if active.is_empty() {
+            let mut buf = String::with_capacity(36);
+            let _ = write!(buf, "{:28}{red_x}", "Active Options:");
+            lines.push(buf);
+        } else {
+            let mut buf = String::with_capacity(128);
+            let _ = write!(buf, "{:28}{green_check} - ", "Active Options:");
+            for (i, opt) in active.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                buf.push_str(opt);
+            }
+            lines.push(buf);
         }
 
         crate::progress::draw_box("Configuration Summary", &lines)
@@ -778,17 +810,26 @@ mod tests {
         let opts_default = ResolvedOptions::default();
         let summary_default = opts_default.to_string();
         assert!(summary_default.contains("Configuration Summary"));
-        assert!(summary_default.contains("Cover Sheets:                false"));
-        assert!(summary_default.contains("Split PDFs:                  (No - Single PDF)"));
+        assert!(summary_default.contains("Cover Sheets:"));
+        assert!(summary_default.contains("Split PDFs:"));
+        assert!(summary_default.contains("Active Options:"));
+        assert!(summary_default.contains('✖'));
 
         let opts_custom = ResolvedOptions {
             cover_sheets: true,
             cover_sheets_by: vec![CoverSheetBy::Stage, CoverSheetBy::Round],
             split: vec![SplitBy::Event, SplitBy::Stage],
+            print_stations: true,
             ..Default::default()
         };
         let summary_custom = opts_custom.format_summary();
-        assert!(summary_custom.contains("Cover Sheets:                true (by: stage, round)"));
-        assert!(summary_custom.contains("Split PDFs:                  event, stage"));
+        assert!(summary_custom.contains("Configuration Summary"));
+        assert!(summary_custom.contains("Cover Sheets:"));
+        assert!(summary_custom.contains("stage, round"));
+        assert!(summary_custom.contains("Split PDFs:"));
+        assert!(summary_custom.contains("event, stage"));
+        assert!(summary_custom.contains("Active Options:"));
+        assert!(summary_custom.contains("Print Stations"));
+        assert!(summary_custom.contains('✔'));
     }
 }

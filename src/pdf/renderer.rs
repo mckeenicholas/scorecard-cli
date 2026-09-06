@@ -6,6 +6,7 @@ use printpdf::graphics::{Line, LinePoint, PaintMode, Point, Rect};
 use printpdf::ops::{Op, PdfFontHandle};
 use printpdf::text::TextItem;
 use printpdf::units::Pt;
+use std::fmt::Write;
 
 /// Text alignment within a scorecard cell or bounding box.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,13 +148,14 @@ impl AttemptTableSpec {
         };
 
         let footer_text = time_limit_info.and_then(|info| {
-            info.limit_centiseconds.map(|cs| {
-                let time_str = TimeLimitInfo::format_centiseconds(cs);
+            info.limit_centiseconds.map(|limit| {
+                let mut text = String::with_capacity(32);
                 if info.is_cumulative {
-                    format!("Time limit: {time_str} cumulative")
+                    let _ = write!(text, "Time limit: {limit} cumulative");
                 } else {
-                    format!("Time limit: {time_str}")
+                    let _ = write!(text, "Time limit: {limit}");
                 }
+                text
             })
         });
 
@@ -163,37 +165,36 @@ impl AttemptTableSpec {
         let row_h = ((usable_h - Self::HEADER_H - (banner_count_5 * Self::BANNER_H))
             / Self::BASE_ATTEMPT_ROWS)
             .max(13.5);
+        let mut cutoff_banner = if has_cutoff {
+            let cutoff = time_limit_info
+                .and_then(|info| info.cutoff_centiseconds)
+                .unwrap_or_default();
+            let format_name = if attempt_count <= 3 {
+                "mean"
+            } else {
+                "average"
+            };
+            let mut banner = String::with_capacity(80);
+            let _ = write!(
+                banner,
+                "-------- Must have solve under {cutoff} to complete {format_name} --------"
+            );
+            Some(AttemptItem::CutoffBanner(banner))
+        } else {
+            None
+        };
 
-        let items: Vec<AttemptItem> = (1..=attempt_count)
-            .flat_map(|i| {
-                let solve = AttemptItem::Solve(i.to_string());
-                let banner = (has_cutoff && i == cutoff_attempts)
-                    .then(|| {
-                        time_limit_info
-                            .and_then(|info| info.cutoff_centiseconds)
-                            .map(|cs| {
-                                let cutoff_str = TimeLimitInfo::format_centiseconds(cs);
-                                let format_name = if attempt_count <= 3 {
-                                    "mean"
-                                } else {
-                                    "average"
-                                };
-                                AttemptItem::CutoffBanner(format!(
-                                    "-------- Must have solve under {cutoff_str} to complete {format_name} --------"
-                                ))
-                            })
-                    })
-                    .flatten();
-
-                std::iter::once(solve).chain(banner)
-            })
-            .chain([
-                AttemptItem::ExtraBanner(
-                    "Extra or provisional solve (Delegate initials: ______ )".to_string(),
-                ),
-                AttemptItem::Solve(String::new()),
-            ])
-            .collect();
+        let mut items = Vec::with_capacity(attempt_count + 3);
+        for i in 1..=attempt_count {
+            items.push(AttemptItem::Solve(i.to_string()));
+            if i == cutoff_attempts {
+                items.extend(cutoff_banner.take());
+            }
+        }
+        items.push(AttemptItem::ExtraBanner(
+            "Extra or provisional solve (Delegate initials: ______ )".to_string(),
+        ));
+        items.push(AttemptItem::Solve(String::new()));
 
         let total_banners = items
             .iter()
@@ -495,60 +496,71 @@ impl<'a> CardPainter<'a> {
         let mut cur_row_y = top_y - AttemptTableSpec::HEADER_H;
 
         for item in &spec.items {
-            match item {
-                AttemptItem::Solve(attempt_label) => {
-                    let next_y = cur_row_y - spec.row_h;
-
-                    if !attempt_label.is_empty() {
-                        let text_y = next_y + (spec.row_h - self.theme.cell_font_size) / 2.0 + 1.0;
-                        TextDrawer::draw(
-                            self.ops,
-                            TextSpec {
-                                text: attempt_label,
-                                cell_x: self.inner_x,
-                                baseline_y: text_y,
-                                cell_w: spec.col_widths[0],
-                                font_size: self.theme.cell_font_size,
-                                bold: false,
-                                align: TextAlign::Center,
-                            },
-                        );
-                    }
-
-                    self.set_grid_stroke();
-                    self.draw_line(self.inner_x, next_y, self.inner_x + self.inner_w, next_y);
-
-                    let mut div_x = self.inner_x;
-                    for &w in spec.col_widths.iter().take(spec.col_widths.len() - 1) {
-                        div_x += w;
-                        self.draw_line(div_x, cur_row_y, div_x, next_y);
-                    }
-
-                    cur_row_y = next_y;
-                }
+            cur_row_y = match item {
+                AttemptItem::Solve(label) => self.draw_solve_row(cur_row_y, label, spec),
                 AttemptItem::CutoffBanner(text) | AttemptItem::ExtraBanner(text) => {
-                    let next_y = cur_row_y - AttemptTableSpec::BANNER_H;
-
-                    self.draw_filled_rect(
-                        RectSpec::new(
-                            self.inner_x,
-                            next_y,
-                            self.inner_w,
-                            AttemptTableSpec::BANNER_H,
-                        ),
-                        self.theme.header_bg_grey,
-                    );
-
-                    let text_y = next_y + (AttemptTableSpec::BANNER_H - 7.0) / 2.0 + 1.0;
-                    self.draw_full_width(text, text_y, 7.0, false);
-
-                    self.set_grid_stroke();
-                    self.draw_line(self.inner_x, next_y, self.inner_x + self.inner_w, next_y);
-
-                    cur_row_y = next_y;
+                    self.draw_banner_row(cur_row_y, text)
                 }
-            }
+            };
         }
+    }
+
+    fn draw_solve_row(
+        &mut self,
+        cur_row_y: f32,
+        attempt_label: &str,
+        spec: &AttemptTableSpec,
+    ) -> f32 {
+        let next_y = cur_row_y - spec.row_h;
+
+        if !attempt_label.is_empty() {
+            let text_y = next_y + (spec.row_h - self.theme.cell_font_size) / 2.0 + 1.0;
+            TextDrawer::draw(
+                self.ops,
+                TextSpec {
+                    text: attempt_label,
+                    cell_x: self.inner_x,
+                    baseline_y: text_y,
+                    cell_w: spec.col_widths[0],
+                    font_size: self.theme.cell_font_size,
+                    bold: false,
+                    align: TextAlign::Center,
+                },
+            );
+        }
+
+        self.set_grid_stroke();
+        self.draw_line(self.inner_x, next_y, self.inner_x + self.inner_w, next_y);
+
+        let mut div_x = self.inner_x;
+        for &w in spec.col_widths.iter().take(spec.col_widths.len() - 1) {
+            div_x += w;
+            self.draw_line(div_x, cur_row_y, div_x, next_y);
+        }
+
+        next_y
+    }
+
+    fn draw_banner_row(&mut self, cur_row_y: f32, text: &str) -> f32 {
+        let next_y = cur_row_y - AttemptTableSpec::BANNER_H;
+
+        self.draw_filled_rect(
+            RectSpec::new(
+                self.inner_x,
+                next_y,
+                self.inner_w,
+                AttemptTableSpec::BANNER_H,
+            ),
+            self.theme.header_bg_grey,
+        );
+
+        let text_y = next_y + (AttemptTableSpec::BANNER_H - 7.0) / 2.0 + 1.0;
+        self.draw_full_width(text, text_y, 7.0, false);
+
+        self.set_grid_stroke();
+        self.draw_line(self.inner_x, next_y, self.inner_x + self.inner_w, next_y);
+
+        next_y
     }
 
     fn draw_attempt_border(&mut self, bottom_y: f32, total_table_h: f32) {
@@ -667,15 +679,29 @@ impl<'a> CardPainter<'a> {
         self.draw_full_width(card.competition_name, self.cur_y, 11.5, true);
 
         self.advance_y(14.0);
-        let event_round_str = format!("{} Round {}", card.event_name(), card.round_number);
+        let mut event_round_str = String::with_capacity(32);
+        let _ = write!(
+            event_round_str,
+            "{} Round {}",
+            card.event_name(),
+            card.round_number
+        );
         self.draw_full_width(&event_round_str, self.cur_y, 10.0, true);
 
-        let group_stage_str = match (card.group_number, card.stage_name) {
-            (g, Some(stage)) if g > 0 => format!("Group {g} ({stage})"),
-            (g, None) if g > 0 => format!("Group {g}"),
-            (0, Some(stage)) => format!("Stage: {stage}"),
-            _ => String::new(),
-        };
+        let mut group_stage_str = String::with_capacity(32);
+        match (card.group_number, card.stage_name) {
+            (g, Some(stage)) if g > 0 => {
+                let _ = write!(group_stage_str, "Group {g} ({stage})");
+            }
+            (g, None) if g > 0 => {
+                let _ = write!(group_stage_str, "Group {g}");
+            }
+            (0, Some(stage)) => {
+                let _ = write!(group_stage_str, "Stage: {stage}");
+            }
+            _ => {}
+        }
+
         if !group_stage_str.is_empty() {
             self.advance_y(13.0);
             self.draw_full_width(&group_stage_str, self.cur_y, 9.5, true);
@@ -687,7 +713,8 @@ impl<'a> CardPainter<'a> {
         self.draw_section_banner("FOR DELEGATE");
 
         self.advance_y(14.0);
-        let bundle_str = format!("1. Bundled all {total_cards} scorecards");
+        let mut bundle_str = String::with_capacity(36);
+        let _ = write!(bundle_str, "1. Bundled all {total_cards} scorecards");
         self.draw_checkbox_item(&bundle_str);
 
         self.advance_y(13.0);
@@ -1012,7 +1039,7 @@ impl TextDrawer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scorecard::{ScorecardItem, WcaEvent};
+    use crate::scorecard::{ScorecardItem, TimeLimitInfo, WcaEvent, WcaResult};
 
     #[test]
     fn test_estimate_width() {
@@ -1041,7 +1068,7 @@ mod tests {
             wca_id: Some("2022SMIT01"),
             attempt_count: 5,
             time_limit_info: Some(TimeLimitInfo {
-                limit_centiseconds: Some(60000),
+                limit_centiseconds: WcaResult::new(60000),
                 is_cumulative: false,
                 cutoff_centiseconds: None,
                 cutoff_attempts: 0,
@@ -1196,9 +1223,9 @@ mod tests {
             wca_id: None,
             attempt_count: 5,
             time_limit_info: Some(TimeLimitInfo {
-                limit_centiseconds: Some(60000),
+                limit_centiseconds: WcaResult::new(60000),
                 is_cumulative: false,
-                cutoff_centiseconds: Some(4500),
+                cutoff_centiseconds: WcaResult::new(4500),
                 cutoff_attempts: 2,
             }),
             is_blank: false,
