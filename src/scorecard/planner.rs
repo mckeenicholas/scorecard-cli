@@ -1,5 +1,5 @@
 use super::events::{ActivityCode, WcaEvent};
-use super::model::{PlannedRoundSummary, ScorecardItem, ScorecardPlan, TimeLimitInfo};
+use super::model::{Competitor, PlannedRoundSummary, ScorecardItem, ScorecardPlan, TimeLimitInfo};
 use crate::options::CoverSheetBy;
 use crate::wcif::{
     AdvancementCalculator, Competition, Event, Person, Round, ScheduledActivityInfo,
@@ -164,17 +164,29 @@ fn resolve_assignment<'a>(
     })
 }
 
-/// Formats a competitor's name. When `print_one_name` is true, removes any parenthesized local or Latin name.
-/// Currently this assumes that all names conform to the WCA spec, if someone submits an invalid name (i.e. with
-/// non-ascii parens or in the incorrect format, this could mangle the name in unintended ways.
-pub fn format_competitor_name(name: &str, print_one_name: bool) -> &str {
-    if !print_one_name {
-        return name;
+/// Splits a competitor's name into primary name and optional parenthesized local name.
+/// E.g. `"Marco Yang (杨柯辰)"` -> `("Marco Yang", Some("杨柯辰"))`.
+pub fn parse_competitor_name(name: &str) -> (&str, Option<&str>) {
+    if let Some(open) = name.find('(')
+        && let Some(close) = name[open..].find(')')
+    {
+        let primary = name[..open].trim();
+        let local = name[open + 1..open + close].trim();
+        if !local.is_empty() {
+            return (primary, Some(local));
+        }
     }
-    if let Some(idx) = name.find('(') {
-        name[..idx].trim_end()
+    (name.trim(), None)
+}
+
+/// Formats a competitor's name as a `(primary, Option<local>)` pair.
+/// When `print_one_name` is true, the local name is omitted (`None`).
+pub fn format_competitor_name(name: &str, print_one_name: bool) -> (&str, Option<&str>) {
+    let (primary, local) = parse_competitor_name(name);
+    if print_one_name {
+        (primary, None)
     } else {
-        name
+        (primary, local)
     }
 }
 
@@ -200,76 +212,69 @@ fn collect_open_round_competitors<'a>(
     let comp_name = ctx.comp.display_name();
     let time_limit_info =
         TimeLimitInfo::from_wcif(ctx.round.time_limit.as_ref(), ctx.round.cutoff.as_ref());
-    let competitors: Vec<_> = ctx
-        .comp
-        .accepted_competitors_for_event(&ctx.event.id)
-        .filter_map(|person| {
-            let assignment =
-                resolve_assignment(person, ctx.activity_map, ctx.target.activity_code());
+    let mut groups = GroupMap::new();
+    let mut count = 0;
+    let mut sample_names = Vec::with_capacity(5);
 
-            let (group_num, station_num, stage_name) = match assignment {
-                Some(a) => a,
-                None => {
-                    if ctx.target.round_number == 1 {
-                        (1, None, None)
-                    } else {
-                        return None;
-                    }
+    for person in ctx.comp.accepted_competitors_for_event(&ctx.event.id) {
+        let assignment = resolve_assignment(person, ctx.activity_map, ctx.target.activity_code());
+
+        let (group_num, station_num, stage_name) = match assignment {
+            Some(a) => a,
+            None => {
+                if ctx.target.round_number == 1 {
+                    (1, None, None)
+                } else {
+                    continue;
                 }
-            };
+            }
+        };
 
-            let station_num = if ctx.print_stations {
-                station_num
-            } else {
-                None
-            };
+        let station_num = if ctx.print_stations {
+            station_num
+        } else {
+            None
+        };
 
-            Some((person, group_num, station_num, stage_name))
-        })
-        .collect();
+        count += 1;
+        if sample_names.len() < 5 {
+            let (primary, local) = format_competitor_name(&person.name, ctx.print_one_name);
+            sample_names.push(match local {
+                Some(loc) => format!("{primary} ({loc})"),
+                None => primary.to_string(),
+            });
+        }
 
-    let count = competitors.len();
-    let sample_names: Vec<String> = competitors
-        .iter()
-        .take(5)
-        .map(|(person, ..)| format_competitor_name(&person.name, ctx.print_one_name).to_string())
-        .collect();
-
-    let groups = competitors.into_iter().fold(
-        GroupMap::new(),
-        |mut acc, (person, group_num, station_num, stage_name)| {
-            let item = ScorecardItem::competitor(
-                comp_name,
-                ctx.target.event,
-                ctx.target.round_number,
-                group_num,
-                stage_name,
-                format_competitor_name(person.name.as_str(), ctx.print_one_name),
-                person.registrant_id(),
-                person.wca_id.as_deref(),
-                station_num,
-                ctx.attempt_count,
-                time_limit_info,
-            );
-            acc.entry((group_num, stage_name)).or_default().push(item);
-            acc
-        },
-    );
+        let competitor = Competitor::from_person(person, ctx.print_one_name);
+        let item = ScorecardItem::competitor(
+            comp_name,
+            ctx.target.event,
+            ctx.target.round_number,
+            group_num,
+            stage_name,
+            competitor,
+            station_num,
+            ctx.attempt_count,
+            time_limit_info,
+        );
+        groups
+            .entry((group_num, stage_name))
+            .or_default()
+            .push(item);
+    }
 
     (groups, count, sample_names)
 }
 
 /// Sorts cards within a group:
 /// 1. Cards with station numbers come first, sorted by station number ascending.
-/// 2. Cards without station numbers (or sharing the same station number) are sorted alphabetically by competitor name.
+/// 2. Cards without station numbers (or sharing the same station number) are sorted alphabetically by competitor.
 pub fn sort_group_cards(cards: &mut [ScorecardItem<'_>]) {
     cards.sort_by(|a, b| match (a.station_number, b.station_number) {
-        (Some(s_a), Some(s_b)) => s_a
-            .cmp(&s_b)
-            .then_with(|| a.competitor_name.cmp(b.competitor_name)),
+        (Some(s_a), Some(s_b)) => s_a.cmp(&s_b).then_with(|| a.competitor.cmp(&b.competitor)),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.competitor_name.cmp(b.competitor_name),
+        (None, None) => a.competitor.cmp(&b.competitor),
     });
 }
 

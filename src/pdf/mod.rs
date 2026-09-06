@@ -1,3 +1,4 @@
+pub mod font;
 pub mod generator;
 pub mod layout;
 pub mod renderer;
@@ -8,8 +9,9 @@ pub use layout::{PageFormat, PageLayout, PaperSize};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scorecard::{ScorecardItem, TimeLimitInfo, WcaEvent, WcaResult};
-    use crate::wcif::Competition;
+    use crate::scorecard::{Competitor, ScorecardItem, TimeLimitInfo, WcaEvent, WcaResult};
+    use crate::wcif::{Competition, WcaId};
+    use std::num::NonZeroUsize;
 
     #[test]
     fn test_pdf_generator_formats() {
@@ -33,9 +35,12 @@ mod tests {
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Main Stage"),
-                competitor_name: "Alice Smith",
-                registrant_id: Some(1),
-                wca_id: Some("2022SMIT01"),
+                competitor: Some(Competitor {
+                    name: "Alice Smith",
+                    local_name: None,
+                    registrant_id: NonZeroUsize::MIN,
+                    wca_id: WcaId::parse("2022SMIT01"),
+                }),
                 attempt_count: 5,
                 time_limit_info: Some(TimeLimitInfo {
                     limit_centiseconds: WcaResult::new(60000),
@@ -55,9 +60,7 @@ mod tests {
                 round_number: 2,
                 group_number: 1,
                 stage_name: None,
-                competitor_name: "",
-                registrant_id: None,
-                wca_id: None,
+                competitor: None,
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: true,

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::pdf::{PageFormat, PaperSize};
 use crate::wcif::GroupifierCompetitionConfig;
 use clap::{Parser, ValueEnum};
@@ -5,7 +7,9 @@ use crossterm::style::Stylize;
 use serde::{Deserialize, Serialize};
 
 /// Criteria for splitting output PDFs into separate files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, ValueEnum, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, ValueEnum, Serialize, Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum SplitBy {
     #[value(name = "event", alias = "events", alias = "e")]
@@ -250,6 +254,10 @@ pub struct Cli {
         value_name = "BOOL"
     )]
     pub scramble_checker_blank: Option<bool>,
+
+    /// Path to a custom TTF/OTF/TTC font file for rendering local competitor names (auto-detected if omitted)
+    #[arg(long, value_name = "PATH")]
+    pub font: Option<PathBuf>,
 }
 
 /// Error returned when options have incompatible file splitting and cover sheet configurations.
@@ -306,6 +314,7 @@ pub struct ResolvedOptions {
     pub scramble_checker_top_ranked: bool,   // TODO: wire to renderer
     pub scramble_checker_final_rounds: bool, // TODO: wire to renderer
     pub scramble_checker_blank: bool,        // TODO: wire to renderer
+    pub font: Option<PathBuf>,
 }
 
 impl Default for ResolvedOptions {
@@ -322,6 +331,7 @@ impl Default for ResolvedOptions {
             scramble_checker_top_ranked: false,
             scramble_checker_final_rounds: false,
             scramble_checker_blank: false,
+            font: None,
         }
     }
 }
@@ -414,6 +424,9 @@ impl ResolvedOptions {
             cli.scramble_checker_final_rounds,
         );
         Self::apply_optional(&mut self.scramble_checker_blank, cli.scramble_checker_blank);
+        if let Some(ref f) = cli.font {
+            self.font = Some(f.clone());
+        }
     }
 
     fn normalize_cover_sheet_list(list: &mut Vec<CoverSheetBy>) {
@@ -423,7 +436,7 @@ impl ResolvedOptions {
     }
 
     fn normalize_split_list(list: &mut Vec<SplitBy>) {
-        list.sort_by_key(|s| *s as u8);
+        list.sort();
         list.dedup();
     }
 
@@ -538,24 +551,27 @@ impl ResolvedOptions {
             ("Scramble Check Blank Cards", self.scramble_checker_blank),
         ];
 
-        let active: Vec<&str> = flags
+        let mut active = flags
             .iter()
-            .filter_map(|&(name, active)| active.then_some(name))
-            .collect();
+            .filter_map(|&(name, active)| active.then_some(name));
 
-        if active.is_empty() {
+        if let Some(first) = active.next() {
+            let mut buf = String::with_capacity(128);
+            let _ = write!(buf, "{:28}{green_check} - {first}", "Active Options:");
+            for opt in active {
+                buf.push_str(", ");
+                buf.push_str(opt);
+            }
+            lines.push(buf);
+        } else {
             let mut buf = String::with_capacity(36);
             let _ = write!(buf, "{:28}{red_x}", "Active Options:");
             lines.push(buf);
-        } else {
-            let mut buf = String::with_capacity(128);
-            let _ = write!(buf, "{:28}{green_check} - ", "Active Options:");
-            for (i, opt) in active.iter().enumerate() {
-                if i > 0 {
-                    buf.push_str(", ");
-                }
-                buf.push_str(opt);
-            }
+        }
+
+        if let Some(ref path) = self.font {
+            let mut buf = String::with_capacity(64);
+            let _ = write!(buf, "{:28}{}", "Font:", path.display());
             lines.push(buf);
         }
 

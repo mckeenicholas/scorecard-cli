@@ -6,12 +6,13 @@ pub use advancement::AdvancementCalculator;
 pub use loader::{WcifLoadError, WcifLoader, expand_tilde};
 pub use model::{
     Competition, Cutoff, Event, GroupifierCompetitionConfig, Person, Round, ScheduledActivityInfo,
-    TimeLimit,
+    TimeLimit, WcaId,
 };
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use model::CountryIso2;
     use std::path::Path;
 
     #[test]
@@ -33,6 +34,29 @@ mod tests {
 
         assert_eq!(comp.count_competitors_for_event("333"), 3);
         assert_eq!(comp.count_competitors_for_event("222"), 2);
+        assert_eq!(comp.persons[0].country_iso2, CountryIso2::parse("US"));
+        assert_eq!(comp.persons[1].country_iso2, CountryIso2::parse("CA"));
+    }
+
+    #[test]
+    fn test_country_iso2() {
+        let code = CountryIso2::parse("CA").expect("valid country code");
+        assert_eq!(code.as_str(), "CA");
+        assert_eq!(&*code, "CA");
+        assert_eq!(code, "CA");
+        assert_eq!(code.to_bytes(), *b"CA");
+        assert_eq!(code.0, *b"CA");
+        assert_eq!(format!("{code}"), "CA");
+
+        assert!(CountryIso2::parse("C").is_none());
+        assert!(CountryIso2::parse("CAN").is_none());
+        assert!(CountryIso2::parse("").is_none());
+
+        // Serde roundtrip
+        let json = serde_json::to_string(&code).unwrap();
+        assert_eq!(json, "\"CA\"");
+        let deserialized: CountryIso2 = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, code);
     }
 
     #[test]

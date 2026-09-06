@@ -300,14 +300,19 @@ fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, reqwest::Error
         .timeout(Duration::from_millis(2500))
         .build()?;
 
-    let encoded_query: String = query
-        .chars()
-        .flat_map(|c| match c {
-            ' ' => vec!['%', '2', '0'],
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![c],
-            _ => format!("%{:02X}", c as u32).chars().collect(),
-        })
-        .collect();
+    let mut encoded_query = String::with_capacity(query.len() * 3);
+    for b in query.as_bytes() {
+        match b {
+            b' ' => encoded_query.push_str("%20"),
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded_query.push(char::from(*b));
+            }
+            _ => {
+                use std::fmt::Write as _;
+                let _ = write!(encoded_query, "%{b:02X}");
+            }
+        }
+    }
     let url = format!("https://www.worldcubeassociation.org/api/v0/competitions?q={encoded_query}");
 
     let resp = client.get(&url).send()?;
@@ -377,7 +382,8 @@ fn clear_widget_lines<W: Write>(out: &mut W, lines_count: usize) -> Result<(), s
         }
     }
     if lines_count > 1 {
-        queue!(out, cursor::MoveUp((lines_count - 1) as u16))?;
+        let up = u16::try_from(lines_count - 1).unwrap_or(u16::MAX);
+        queue!(out, cursor::MoveUp(up))?;
     }
     queue!(out, cursor::MoveToColumn(0))?;
     Ok(())
@@ -973,6 +979,7 @@ pub fn prompt_interactive_flow() -> Result<(Cli, Competition), InteractiveError>
         scramble_checker_top_ranked: Some(extras.scramble_checker_top_ranked),
         scramble_checker_final_rounds: Some(extras.scramble_checker_final_rounds),
         scramble_checker_blank: Some(extras.scramble_checker_blank),
+        font: None,
     };
 
     Ok((cli, comp))

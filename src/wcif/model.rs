@@ -1,5 +1,217 @@
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::num::NonZeroUsize;
+
+/// 10-character ASCII identifier for a WCA competitor in the format `NNNNLLLLNN` (e.g. `"2022SMIT01"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WcaId([u8; 10]);
+
+impl WcaId {
+    /// Creates a `WcaId` from a 10-byte ASCII array.
+    pub const fn new(bytes: [u8; 10]) -> Self {
+        Self(bytes)
+    }
+
+    /// Parses a 10-character ASCII WCA ID (e.g. `"2022SMIT01"`). Returns `None` if invalid.
+    pub fn parse(s: &str) -> Option<Self> {
+        let b = s.as_bytes();
+        if b.len() == 10 && b.is_ascii() {
+            let mut arr = [0u8; 10];
+            arr.copy_from_slice(b);
+            Some(Self(arr))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the WCA ID as a string slice.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        unsafe { std::str::from_utf8_unchecked(&self.0) }
+    }
+}
+
+impl std::ops::Deref for WcaId {
+    type Target = str;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for WcaId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<str> for WcaId {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for WcaId {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl Serialize for WcaId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for WcaId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = <&str>::deserialize(deserializer)?;
+        WcaId::parse(s.trim()).ok_or_else(|| serde::de::Error::custom("invalid WCA ID format"))
+    }
+}
+
+/// Helper deserializer for WCIF `wcaId` which can be `null`, empty string `""`, or a 10-char ID.
+pub fn deserialize_optional_wca_id<'de, D>(deserializer: D) -> Result<Option<WcaId>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<&str> = Option::deserialize(deserializer)?;
+    match opt {
+        Some(s) if !s.trim().is_empty() => WcaId::parse(s.trim())
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom("invalid WCA ID format")),
+        _ => Ok(None),
+    }
+}
+
+/// 2-character ASCII country code (ISO 3166-1 alpha-2, e.g. `"US"`, `"CA"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct CountryIso2(pub [u8; 2]);
+
+impl CountryIso2 {
+    /// Creates a `CountryIso2` from a 2-byte ASCII array.
+    pub const fn new(bytes: [u8; 2]) -> Self {
+        Self(bytes)
+    }
+
+    /// Parses a 2-character ASCII country code (e.g. `"US"`). Returns `None` if invalid.
+    pub fn parse(s: &str) -> Option<Self> {
+        let b = s.as_bytes();
+        if b.len() == 2 && b.is_ascii() {
+            Some(Self([b[0], b[1]]))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the country code as a 2-byte ASCII array.
+    #[inline]
+    pub const fn to_bytes(self) -> [u8; 2] {
+        self.0
+    }
+
+    /// Returns the country code as a string slice.
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        unsafe { std::str::from_utf8_unchecked(&self.0) }
+    }
+}
+
+impl std::ops::Deref for CountryIso2 {
+    type Target = str;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl std::fmt::Display for CountryIso2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialEq<str> for CountryIso2 {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for CountryIso2 {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl From<[u8; 2]> for CountryIso2 {
+    fn from(bytes: [u8; 2]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<CountryIso2> for [u8; 2] {
+    fn from(code: CountryIso2) -> Self {
+        code.0
+    }
+}
+
+impl Serialize for CountryIso2 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CountryIso2 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = <&str>::deserialize(deserializer)?;
+        CountryIso2::parse(s.trim())
+            .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format"))
+    }
+}
+
+/// Helper deserializer for WCIF `countryIso2` which can be `null`, empty string `""`, or a 2-char code.
+pub fn deserialize_optional_country_iso2<'de, D>(
+    deserializer: D,
+) -> Result<Option<CountryIso2>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<&str> = Option::deserialize(deserializer)?;
+    match opt {
+        Some(s) if !s.trim().is_empty() => CountryIso2::parse(s.trim())
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format")),
+        _ => Ok(None),
+    }
+}
+
+/// Represents a competitor or staff member.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Person {
+    pub registrant_id: Option<NonZeroUsize>,
+    pub name: String,
+    #[serde(default, deserialize_with = "deserialize_optional_wca_id")]
+    pub wca_id: Option<WcaId>,
+    #[serde(default, deserialize_with = "deserialize_optional_country_iso2")]
+    pub country_iso2: Option<CountryIso2>,
+    pub registration: Option<Registration>,
+    #[serde(default)]
+    pub assignments: Vec<Assignment>,
+}
 
 /// Root WCIF structure representing a WCA Competition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,27 +312,9 @@ impl Competition {
     }
 }
 
-/// Represents a competitor or staff member.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Person {
-    pub registrant_id: Option<usize>,
-    pub name: String,
-    pub wca_id: Option<String>,
-    pub country_iso2: Option<String>,
-    pub gender: Option<String>,
-    pub registration: Option<Registration>,
-    pub avatar: Option<Avatar>,
-    pub roles: Option<Vec<String>>,
-    #[serde(default)]
-    pub assignments: Vec<Assignment>,
-    #[serde(default)]
-    pub personal_bests: Vec<PersonalBest>,
-}
-
 impl Person {
     /// Resolves the registrant ID either from `person.registrantId` or `person.registration.id`.
-    pub fn registrant_id(&self) -> Option<usize> {
+    pub fn registrant_id(&self) -> Option<NonZeroUsize> {
         self.registrant_id
             .or_else(|| self.registration.as_ref().and_then(|r| r.id))
     }
@@ -129,19 +323,12 @@ impl Person {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Registration {
-    pub id: Option<usize>,
+    pub id: Option<NonZeroUsize>,
     pub status: Option<String>,
     #[serde(default)]
     pub event_ids: Vec<String>,
     #[serde(default)]
     pub is_competing: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Avatar {
-    pub url: Option<String>,
-    pub thumb_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,19 +340,6 @@ pub struct Assignment {
     pub station_number: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PersonalBest {
-    pub event_id: String,
-    #[serde(rename = "type")]
-    pub pb_type: String,
-    pub best: isize,
-    pub world_ranking: Option<usize>,
-    pub continental_ranking: Option<usize>,
-    pub national_ranking: Option<usize>,
-}
-
-/// Represents an event holding multiple rounds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
@@ -215,13 +389,44 @@ pub struct Cutoff {
     pub attempt_result: isize,
 }
 
+/// Helper deserializer for WCIF `AdvancementCondition` level which can be an integer (`16`) or float (`16.0`).
+pub fn deserialize_optional_level<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrFloat {
+        Int(usize),
+        Float(f64),
+    }
+
+    let opt: Option<NumOrFloat> = Option::deserialize(deserializer)?;
+    match opt {
+        Some(NumOrFloat::Int(n)) => Ok(Some(n)),
+        Some(NumOrFloat::Float(f)) => {
+            if f >= 0.0 && f.is_finite() {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                Ok(Some(f.round() as usize))
+            } else {
+                Ok(None)
+            }
+        }
+        None => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdvancementCondition {
     #[serde(rename = "type")]
     pub condition_type: String,
-    #[serde(alias = "level")]
-    pub value: Option<f64>,
+    #[serde(
+        alias = "level",
+        default,
+        deserialize_with = "deserialize_optional_level"
+    )]
+    pub value: Option<usize>,
 }
 
 /// Competition schedule containing venues and rooms.

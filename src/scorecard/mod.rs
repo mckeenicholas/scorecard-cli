@@ -2,8 +2,12 @@ pub mod events;
 pub mod model;
 pub mod planner;
 
+#[cfg(test)]
+pub use crate::wcif::WcaId;
 pub use events::WcaEvent;
-#[allow(unused_imports)]
+#[cfg(test)]
+pub use model::Competitor;
+#[cfg(test)]
 pub use model::{InvalidWcaResult, WcaResult};
 pub use model::{ScorecardItem, TimeLimitInfo};
 pub use planner::{PlannerError, ScorecardPlanner};
@@ -13,6 +17,7 @@ mod tests {
     use super::events::ActivityCode;
     use super::model::{PlannedRoundSummary, ScorecardPlan};
     use super::*;
+    use std::num::NonZeroUsize;
 
     #[test]
     fn test_event_name_by_id() {
@@ -95,9 +100,12 @@ mod tests {
             round_number: 1,
             group_number: 1,
             stage_name: Some("Red Stage"),
-            competitor_name: "Alice Smith",
-            registrant_id: Some(10),
-            wca_id: Some("2022SMIT01"),
+            competitor: Some(Competitor {
+                name: "Alice Smith",
+                local_name: None,
+                registrant_id: NonZeroUsize::new(10).unwrap(),
+                wca_id: WcaId::parse("2022SMIT01"),
+            }),
             attempt_count: 5,
             time_limit_info: Some(TimeLimitInfo {
                 limit_centiseconds: WcaResult::new(30000),
@@ -110,7 +118,7 @@ mod tests {
             total_group_cards: 0,
         };
 
-        assert_eq!(item.display_competitor_name(), "Alice Smith");
+        assert_eq!(item.display_competitor_name(), ("Alice Smith", None));
         assert_eq!(item.display_wca_id(), "2022SMIT01");
         assert_eq!(item.truncated_competition_name(20), "Very Long Competi...");
         assert_eq!(
@@ -122,22 +130,22 @@ mod tests {
     #[test]
     fn test_sort_group_cards_station_and_name() {
         let card1 = ScorecardItem {
-            competitor_name: "Zack",
+            competitor: Some(Competitor::simple("Zack")),
             station_number: Some(2),
             ..Default::default()
         };
         let card2 = ScorecardItem {
-            competitor_name: "Alice",
+            competitor: Some(Competitor::simple("Alice")),
             station_number: Some(1),
             ..Default::default()
         };
         let card3 = ScorecardItem {
-            competitor_name: "Charlie",
+            competitor: Some(Competitor::simple("Charlie")),
             station_number: None,
             ..Default::default()
         };
         let card4 = ScorecardItem {
-            competitor_name: "Bob",
+            competitor: Some(Competitor::simple("Bob")),
             station_number: None,
             ..Default::default()
         };
@@ -146,13 +154,13 @@ mod tests {
         planner::sort_group_cards(&mut cards);
 
         // Station numbers first: 1 (Alice), then 2 (Zack), then no station sorted alphabetically: Bob, Charlie
-        assert_eq!(cards[0].competitor_name, "Alice");
+        assert_eq!(cards[0].competitor_name(), "Alice");
         assert_eq!(cards[0].station_number, Some(1));
-        assert_eq!(cards[1].competitor_name, "Zack");
+        assert_eq!(cards[1].competitor_name(), "Zack");
         assert_eq!(cards[1].station_number, Some(2));
-        assert_eq!(cards[2].competitor_name, "Bob");
+        assert_eq!(cards[2].competitor_name(), "Bob");
         assert_eq!(cards[2].station_number, None);
-        assert_eq!(cards[3].competitor_name, "Charlie");
+        assert_eq!(cards[3].competitor_name(), "Charlie");
         assert_eq!(cards[3].station_number, None);
     }
 
@@ -307,8 +315,8 @@ mod tests {
     #[test]
     fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
         use crate::wcif::model::{
-            Activity, Assignment, Competition, Event, Person, Registration, Room, Round, Schedule,
-            Venue,
+            Activity, Assignment, Competition, CountryIso2, Event, Person, Registration, Room,
+            Round, Schedule, Venue,
         };
 
         let comp = Competition {
@@ -318,19 +326,16 @@ mod tests {
             short_name: None,
             persons: vec![
                 Person {
-                    registrant_id: Some(1),
+                    registrant_id: NonZeroUsize::new(1),
                     name: "Alice Smith".to_string(),
-                    wca_id: Some("2022SMIT01".to_string()),
-                    country_iso2: Some("US".to_string()),
-                    gender: Some("f".to_string()),
+                    wca_id: WcaId::parse("2022SMIT01"),
+                    country_iso2: CountryIso2::parse("US"),
                     registration: Some(Registration {
-                        id: Some(1),
+                        id: NonZeroUsize::new(1),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string(), "222".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![
                         Assignment {
                             activity_id: 101, // 333-r1-g1
@@ -348,22 +353,18 @@ mod tests {
                             code: Some("competitor".to_string()),
                         },
                     ],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(2),
+                    registrant_id: NonZeroUsize::new(2),
                     name: "Bob Jones".to_string(),
-                    wca_id: Some("2021JONE01".to_string()),
-                    country_iso2: Some("US".to_string()),
-                    gender: Some("m".to_string()),
+                    wca_id: WcaId::parse("2021JONE01"),
+                    country_iso2: CountryIso2::parse("US"),
                     registration: Some(Registration {
-                        id: Some(2),
+                        id: NonZeroUsize::new(2),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![
                         Assignment {
                             activity_id: 101, // 333-r1-g1
@@ -372,7 +373,6 @@ mod tests {
                         },
                         // Bob did not advance to 333-r2!
                     ],
-                    personal_bests: vec![],
                 },
             ],
             events: vec![
@@ -483,7 +483,7 @@ mod tests {
         let plan_r2 = ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false).unwrap();
         assert_eq!(plan_r2.len(), 1);
         let alice_r2 = &plan_r2[0];
-        assert_eq!(alice_r2.competitor_name, "Alice Smith");
+        assert_eq!(alice_r2.competitor_name(), "Alice Smith");
         assert_eq!(alice_r2.round_number, 2);
         assert_eq!(alice_r2.station_number, Some(5));
 
@@ -511,42 +511,34 @@ mod tests {
             short_name: Some("Test Comp".to_string()),
             persons: vec![
                 Person {
-                    registrant_id: Some(1),
+                    registrant_id: NonZeroUsize::new(1),
                     name: "Alice Smith".to_string(),
-                    wca_id: Some("2022SMIT01".to_string()),
+                    wca_id: WcaId::parse("2022SMIT01"),
                     country_iso2: None,
-                    gender: None,
                     registration: Some(Registration {
-                        id: Some(1),
+                        id: NonZeroUsize::new(1),
                         event_ids: vec!["333".to_string()],
                         status: Some("accepted".to_string()),
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![Assignment {
                         activity_id: 1011,
                         station_number: Some(5),
                         code: Some("competitor".to_string()),
                     }],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(2),
+                    registrant_id: NonZeroUsize::new(2),
                     name: "Bob Jones".to_string(),
                     wca_id: None,
                     country_iso2: None,
-                    gender: None,
                     registration: Some(Registration {
-                        id: Some(2),
+                        id: NonZeroUsize::new(2),
                         event_ids: vec!["333".to_string()],
                         status: Some("pending".to_string()), // Not accepted!
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![],
-                    personal_bests: vec![],
                 },
             ],
             events: vec![Event {
@@ -565,7 +557,7 @@ mod tests {
                         }),
                         advancement_condition: Some(AdvancementCondition {
                             condition_type: "ranking".to_string(),
-                            value: Some(1.0),
+                            value: Some(1),
                         }),
                         scramble_group_count: 1,
                     },
@@ -622,7 +614,7 @@ mod tests {
         assert_eq!(cards_r1.len(), 1);
         let card1 = &cards_r1[0];
         assert_eq!(card1.scorecard_number, 1);
-        assert_eq!(card1.competitor_name, "Alice Smith");
+        assert_eq!(card1.competitor_name(), "Alice Smith");
         assert_eq!(card1.station_number, Some(5));
         assert_eq!(card1.stage_name, Some("Red Stage"));
         assert_eq!(card1.group_number, 1);
@@ -648,7 +640,7 @@ mod tests {
         assert_eq!(blank_card.scorecard_number, 1);
         assert!(blank_card.is_blank);
         assert!(!blank_card.is_cover_sheet);
-        assert_eq!(blank_card.competitor_name, "");
+        assert_eq!(blank_card.competitor_name(), "");
         assert_eq!(blank_card.station_number, None);
     }
 
@@ -656,8 +648,8 @@ mod tests {
     fn test_planner_with_cover_sheets() {
         use crate::options::CoverSheetBy;
         use crate::wcif::model::{
-            Activity, Assignment, Competition, Event, Person, Registration, Room, Round, Schedule,
-            Venue,
+            Activity, Assignment, Competition, CountryIso2, Event, Person, Registration, Room,
+            Round, Schedule, Venue,
         };
 
         let comp = Competition {
@@ -667,46 +659,38 @@ mod tests {
             short_name: None,
             persons: vec![
                 Person {
-                    registrant_id: Some(1),
+                    registrant_id: NonZeroUsize::new(1),
                     name: "Alice Smith".to_string(),
-                    wca_id: Some("2022SMIT01".to_string()),
-                    country_iso2: Some("US".to_string()),
-                    gender: Some("f".to_string()),
+                    wca_id: WcaId::parse("2022SMIT01"),
+                    country_iso2: CountryIso2::parse("US"),
                     registration: Some(Registration {
-                        id: Some(1),
+                        id: NonZeroUsize::new(1),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![Assignment {
                         activity_id: 1011,
                         code: Some("competitor".to_string()),
                         station_number: Some(1),
                     }],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(2),
+                    registrant_id: NonZeroUsize::new(2),
                     name: "Bob Jones".to_string(),
                     wca_id: None,
-                    country_iso2: Some("US".to_string()),
-                    gender: Some("m".to_string()),
+                    country_iso2: CountryIso2::parse("US"),
                     registration: Some(Registration {
-                        id: Some(2),
+                        id: NonZeroUsize::new(2),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![Assignment {
                         activity_id: 1011,
                         code: Some("competitor".to_string()),
                         station_number: Some(2),
                     }],
-                    personal_bests: vec![],
                 },
             ],
             events: vec![Event {
@@ -801,12 +785,12 @@ mod tests {
         let card1 = &plan_all[3];
         assert!(!card1.is_cover_sheet);
         assert_eq!(card1.scorecard_number, 1);
-        assert_eq!(card1.competitor_name, "Alice Smith");
+        assert_eq!(card1.competitor_name(), "Alice Smith");
 
         let card2 = &plan_all[4];
         assert!(!card2.is_cover_sheet);
         assert_eq!(card2.scorecard_number, 2);
-        assert_eq!(card2.competitor_name, "Bob Jones");
+        assert_eq!(card2.competitor_name(), "Bob Jones");
 
         // 2. When only Stage is enabled (default -c):
         let plan_stage = ScorecardPlanner::plan(
@@ -858,8 +842,8 @@ mod tests {
     fn test_planner_additive_multi_stage_multi_group() {
         use crate::options::CoverSheetBy;
         use crate::wcif::model::{
-            Activity, Assignment, Competition, Event, Person, Registration, Room, Round, Schedule,
-            Venue,
+            Activity, Assignment, Competition, CountryIso2, Event, Person, Registration, Room,
+            Round, Schedule, Venue,
         };
 
         let comp = Competition {
@@ -869,67 +853,55 @@ mod tests {
             short_name: None,
             persons: vec![
                 Person {
-                    registrant_id: Some(1),
+                    registrant_id: NonZeroUsize::new(1),
                     name: "Alice Smith".to_string(),
-                    wca_id: Some("2022SMIT01".to_string()),
-                    country_iso2: Some("US".to_string()),
-                    gender: Some("f".to_string()),
+                    wca_id: WcaId::parse("2022SMIT01"),
+                    country_iso2: CountryIso2::parse("US"),
                     registration: Some(Registration {
-                        id: Some(1),
+                        id: NonZeroUsize::new(1),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![Assignment {
                         activity_id: 101, // G1 on Blue Stage
                         station_number: Some(1),
                         code: Some("competitor".to_string()),
                     }],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(2),
+                    registrant_id: NonZeroUsize::new(2),
                     name: "Bob Jones".to_string(),
-                    wca_id: Some("2021JONE01".to_string()),
-                    country_iso2: Some("US".to_string()),
-                    gender: Some("m".to_string()),
+                    wca_id: WcaId::parse("2021JONE01"),
+                    country_iso2: CountryIso2::parse("US"),
                     registration: Some(Registration {
-                        id: Some(2),
+                        id: NonZeroUsize::new(2),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![Assignment {
                         activity_id: 102, // G1 on Red Stage
                         station_number: Some(1),
                         code: Some("competitor".to_string()),
                     }],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(3),
+                    registrant_id: NonZeroUsize::new(3),
                     name: "Charlie Brown".to_string(),
-                    wca_id: Some("2020BROW01".to_string()),
-                    country_iso2: Some("US".to_string()),
-                    gender: Some("m".to_string()),
+                    wca_id: WcaId::parse("2020BROW01"),
+                    country_iso2: CountryIso2::parse("US"),
                     registration: Some(Registration {
-                        id: Some(3),
+                        id: NonZeroUsize::new(3),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![Assignment {
                         activity_id: 103, // G2 on Red Stage
                         station_number: Some(1),
                         code: Some("competitor".to_string()),
                     }],
-                    personal_bests: vec![],
                 },
             ],
             events: vec![Event {
@@ -1044,7 +1016,7 @@ mod tests {
 
         // 3: Alice card
         assert!(!plan[3].is_cover_sheet);
-        assert_eq!(plan[3].competitor_name, "Alice Smith");
+        assert_eq!(plan[3].competitor_name(), "Alice Smith");
         assert_eq!(plan[3].scorecard_number, 1);
 
         // 4: Group 1 Red Stage cover sheet
@@ -1055,7 +1027,7 @@ mod tests {
 
         // 5: Bob card
         assert!(!plan[5].is_cover_sheet);
-        assert_eq!(plan[5].competitor_name, "Bob Jones");
+        assert_eq!(plan[5].competitor_name(), "Bob Jones");
         assert_eq!(plan[5].scorecard_number, 2);
 
         // 6: Group 2 cover sheet
@@ -1072,7 +1044,7 @@ mod tests {
 
         // 8: Charlie card
         assert!(!plan[8].is_cover_sheet);
-        assert_eq!(plan[8].competitor_name, "Charlie Brown");
+        assert_eq!(plan[8].competitor_name(), "Charlie Brown");
         assert_eq!(plan[8].scorecard_number, 3);
     }
 
@@ -1111,27 +1083,33 @@ mod tests {
         // When print_one_name is false: preserves original full name
         assert_eq!(
             format_competitor_name("Zhang San (张三)", false),
-            "Zhang San (张三)"
+            ("Zhang San", Some("张三"))
         );
         assert_eq!(
             format_competitor_name("Lucas Burliga (Łukasz Burliga)", false),
-            "Lucas Burliga (Łukasz Burliga)"
+            ("Lucas Burliga", Some("Łukasz Burliga"))
         );
-        assert_eq!(format_competitor_name("Alice Smith", false), "Alice Smith");
+        assert_eq!(
+            format_competitor_name("Alice Smith", false),
+            ("Alice Smith", None)
+        );
 
         // When print_one_name is true: strips parenthesized local or Latin name
         assert_eq!(
             format_competitor_name("Zhang San (张三)", true),
-            "Zhang San"
+            ("Zhang San", None)
         );
         assert_eq!(
             format_competitor_name("Lucas Burliga (Łukasz Burliga)", true),
-            "Lucas Burliga"
+            ("Lucas Burliga", None)
         );
-        assert_eq!(format_competitor_name("Alice Smith", true), "Alice Smith");
+        assert_eq!(
+            format_competitor_name("Alice Smith", true),
+            ("Alice Smith", None)
+        );
         assert_eq!(
             format_competitor_name("Kim Min-jun (김민준)", true),
-            "Kim Min-jun"
+            ("Kim Min-jun", None)
         );
     }
 }

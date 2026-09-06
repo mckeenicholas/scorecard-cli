@@ -1,5 +1,6 @@
 use crate::pdf::layout::RectSpec;
 use crate::scorecard::{ScorecardItem, TimeLimitInfo};
+use printpdf::FontId;
 use printpdf::color::{Color, Greyscale};
 use printpdf::font::BuiltinFont;
 use printpdf::graphics::{Line, LinePoint, PaintMode, Point, Rect};
@@ -16,7 +17,7 @@ pub enum TextAlign {
 }
 
 /// Visual theme and geometric styling parameters for scorecard rendering.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScorecardTheme {
     pub padding: f32,
     pub border_thickness: f32,
@@ -27,6 +28,14 @@ pub struct ScorecardTheme {
     pub header_font_size: f32,
     pub cell_font_size: f32,
     pub comp_name_font_size: f32,
+    pub custom_font: Option<FontId>,
+}
+
+impl ScorecardTheme {
+    pub fn with_font(mut self, font: Option<FontId>) -> Self {
+        self.custom_font = font;
+        self
+    }
 }
 
 /// Default styling theme matching official WCA competition scorecard aesthetics.
@@ -40,6 +49,7 @@ pub const DEFAULT_THEME: ScorecardTheme = ScorecardTheme {
     header_font_size: 8.5,
     cell_font_size: 10.0,
     comp_name_font_size: 11.5,
+    custom_font: None,
 };
 
 /// Column specification for grid tables (header label, width ratio [0.0..1.0], alignment, bold cell flag).
@@ -104,18 +114,15 @@ const ATTEMPT_COLUMNS: [ColumnDef<'static>; 5] = [
     ColumnDef::new("Comp", 0.15, TextAlign::Center),
 ];
 
-/// Items rendered in the attempt table (regular solve rows, cutoff banners, extra banners).
-#[derive(Debug, Clone, PartialEq)]
-pub enum AttemptItem {
-    Solve(String),
-    CutoffBanner(String),
-    ExtraBanner(String),
-}
+/// Standard labels for regular attempt solve rows (avoids per-card integer-to-string allocations).
+pub const ATTEMPT_LABELS: [&str; 5] = ["1", "2", "3", "4", "5"];
 
 /// Specifications and precomputed geometry for the scorecard attempt table.
 #[derive(Debug)]
 pub struct AttemptTableSpec {
-    pub items: Vec<AttemptItem>,
+    pub attempt_count: usize,
+    pub cutoff_attempts: usize,
+    pub cutoff_banner: Option<String>,
     pub row_h: f32,
     pub total_table_h: f32,
     pub col_widths: [f32; 5],
@@ -165,7 +172,8 @@ impl AttemptTableSpec {
         let row_h = ((usable_h - Self::HEADER_H - (banner_count_5 * Self::BANNER_H))
             / Self::BASE_ATTEMPT_ROWS)
             .max(13.5);
-        let mut cutoff_banner = if has_cutoff {
+
+        let cutoff_banner = if has_cutoff {
             let cutoff = time_limit_info
                 .and_then(|info| info.cutoff_centiseconds)
                 .unwrap_or_default();
@@ -179,35 +187,22 @@ impl AttemptTableSpec {
                 banner,
                 "-------- Must have solve under {cutoff} to complete {format_name} --------"
             );
-            Some(AttemptItem::CutoffBanner(banner))
+            Some(banner)
         } else {
             None
         };
 
-        let mut items = Vec::with_capacity(attempt_count + 3);
-        for i in 1..=attempt_count {
-            items.push(AttemptItem::Solve(i.to_string()));
-            if i == cutoff_attempts {
-                items.extend(cutoff_banner.take());
-            }
-        }
-        items.push(AttemptItem::ExtraBanner(
-            "Extra or provisional solve (Delegate initials: ______ )".to_string(),
-        ));
-        items.push(AttemptItem::Solve(String::new()));
-
-        let total_banners = items
-            .iter()
-            .filter(|it| !matches!(it, AttemptItem::Solve(_)))
-            .count() as f32;
-        let total_attempts = (attempt_count + 1) as f32;
+        let total_banners = if has_cutoff { 2.0 } else { 1.0 };
+        let total_attempts = f32::from(u16::try_from(attempt_count + 1).unwrap_or(6));
         let total_table_h =
             Self::HEADER_H + (total_attempts * row_h) + (total_banners * Self::BANNER_H);
 
         let col_widths = ATTEMPT_COLUMNS.map(|col| inner_w * col.ratio);
 
         Self {
-            items,
+            attempt_count,
+            cutoff_attempts,
+            cutoff_banner,
             row_h,
             total_table_h,
             col_widths,
@@ -394,33 +389,83 @@ impl<'a> CardPainter<'a> {
     pub fn draw_competitor_info_table(&mut self, card: &ScorecardItem<'_>) {
         self.advance_y(5.0);
         let mut id_buf = itoa::Buffer::new();
-        let name_val = card.display_competitor_name();
 
-        if card.is_blank {
-            self.draw_grid_table(
-                14.5,
-                20.0,
+        let (col_defs, id_val, wca_id_val, name_ratio, name_x_offset) = match card.competitor {
+            None => (
                 &[
                     ColumnDef::new("ID", 0.16, TextAlign::Center),
                     ColumnDef::bold("Competitor Name", 0.84, TextAlign::Left),
-                ],
-                &[&["", name_val]],
-            );
-        } else {
-            let id_val = card.registrant_id.map_or("-", |id| id_buf.format(id));
-            let wca_id_val = card.display_wca_id();
+                ][..],
+                "",
+                None,
+                0.84,
+                0.16 * self.inner_w,
+            ),
+            Some(ref comp) => {
+                let id_val = id_buf.format(comp.registrant_id.get());
+                let wca_id_val = comp.display_wca_id();
+                (
+                    &[
+                        ColumnDef::new("ID", 0.16, TextAlign::Center),
+                        ColumnDef::bold("Competitor Name", 0.54, TextAlign::Left),
+                        ColumnDef::new("WCA ID", 0.30, TextAlign::Center),
+                    ][..],
+                    id_val,
+                    Some(wca_id_val),
+                    0.54,
+                    0.16 * self.inner_w,
+                )
+            }
+        };
 
-            self.draw_grid_table(
-                14.5,
-                20.0,
-                &[
-                    ColumnDef::new("ID", 0.16, TextAlign::Center),
-                    ColumnDef::bold("Competitor Name", 0.54, TextAlign::Left),
-                    ColumnDef::new("WCA ID", 0.30, TextAlign::Center),
-                ],
-                &[&[id_val, name_val, wca_id_val]],
-            );
+        let rows: &[&[&str]] = match wca_id_val {
+            Some(wca) => &[&[id_val, "", wca]],
+            None => &[&[id_val, ""]],
+        };
+
+        let row_top = self.cur_y - 14.5;
+        self.draw_grid_table(14.5, 20.0, col_defs, rows);
+
+        if let Some(ref comp) = card.competitor
+            && (!comp.name.is_empty() || comp.local_name.is_some())
+        {
+            let cell_x = self.inner_x + name_x_offset;
+            let cell_w = name_ratio * self.inner_w;
+            self.draw_competitor_name(comp.name, comp.local_name, cell_x, row_top, cell_w, 20.0);
         }
+    }
+
+    fn draw_competitor_name(
+        &mut self,
+        primary: &str,
+        local: Option<&str>,
+        cell_x: f32,
+        row_top: f32,
+        cell_w: f32,
+        row_h: f32,
+    ) {
+        let max_w = (cell_w - 6.0).max(10.0);
+        let full_w =
+            TextDrawer::estimate_competitor_name_width(primary, local, self.theme.cell_font_size);
+        let font_size = if full_w > max_w {
+            (self.theme.cell_font_size * (max_w / full_w)).max(6.0)
+        } else {
+            self.theme.cell_font_size
+        };
+
+        let baseline_y = row_top - row_h + (row_h - font_size) / 2.0 + 1.0;
+        let pad = 3.0;
+        let start_x = cell_x + pad;
+
+        TextDrawer::draw_competitor_name(
+            self.ops,
+            primary,
+            local,
+            start_x,
+            baseline_y,
+            font_size,
+            self.theme.custom_font.as_ref(),
+        );
     }
 
     /// Draws the attempt table dynamically sized to fill the remaining scorecard height,
@@ -471,7 +516,7 @@ impl<'a> CardPainter<'a> {
                     baseline_y: h_text_y,
                     cell_w: w,
                     font_size: self.theme.header_font_size,
-                    bold: true,
+                    bold: false,
                     align: col.align,
                 },
             );
@@ -495,14 +540,26 @@ impl<'a> CardPainter<'a> {
     fn draw_attempt_items(&mut self, top_y: f32, spec: &AttemptTableSpec) {
         let mut cur_row_y = top_y - AttemptTableSpec::HEADER_H;
 
-        for item in &spec.items {
-            cur_row_y = match item {
-                AttemptItem::Solve(label) => self.draw_solve_row(cur_row_y, label, spec),
-                AttemptItem::CutoffBanner(text) | AttemptItem::ExtraBanner(text) => {
-                    self.draw_banner_row(cur_row_y, text)
-                }
+        for i in 1..=spec.attempt_count {
+            let label = if (1..=5).contains(&i) {
+                ATTEMPT_LABELS[i - 1]
+            } else {
+                ""
             };
+            cur_row_y = self.draw_solve_row(cur_row_y, label, spec);
+
+            if i == spec.cutoff_attempts
+                && let Some(ref banner) = spec.cutoff_banner
+            {
+                cur_row_y = self.draw_banner_row(cur_row_y, banner);
+            }
         }
+
+        cur_row_y = self.draw_banner_row(
+            cur_row_y,
+            "Extra or provisional solve (Delegate initials: ______ )",
+        );
+        self.draw_solve_row(cur_row_y, "", spec);
     }
 
     fn draw_solve_row(
@@ -606,7 +663,7 @@ impl<'a> CardPainter<'a> {
     pub fn draw_checkbox_item(&mut self, text: &str) {
         let box_size = 8.0f32;
         let gap = 6.0f32;
-        let text_w = TextDrawer::estimate_width(text, 8.5);
+        let text_w = TextDrawer::estimate_width(text, 8.5, false);
         let total_w = box_size + gap + text_w;
         let start_x = self.inner_x + (self.inner_w - total_w) / 2.0;
         let box_y = self.cur_y - 1.0;
@@ -631,7 +688,7 @@ impl<'a> CardPainter<'a> {
     /// Draws a text label followed by a horizontal fill-in underline for signatures/initials (centered).
     /// The underline area is ~4 characters wide (~30pt).
     pub fn draw_field_with_line(&mut self, label: &str, _indent: f32) {
-        let estimated_w = TextDrawer::estimate_width(label, 8.5);
+        let estimated_w = TextDrawer::estimate_width(label, 8.5, false);
         let line_w = 30.0f32; // ~4 characters wide
         let gap = 5.0f32;
         let total_w = estimated_w + gap + line_w;
@@ -758,8 +815,14 @@ pub struct ScorecardRenderer;
 impl ScorecardRenderer {
     /// Draws a complete scorecard or cover sheet within the given bounding rectangle.
     #[inline]
-    pub fn draw_card(ops: &mut Vec<Op>, card: &ScorecardItem<'_>, bounds: RectSpec) {
-        let mut painter = CardPainter::new(ops, bounds, &DEFAULT_THEME);
+    pub fn draw_card(
+        ops: &mut Vec<Op>,
+        card: &ScorecardItem<'_>,
+        bounds: RectSpec,
+        custom_font: Option<&FontId>,
+    ) {
+        let theme = DEFAULT_THEME.with_font(custom_font.cloned());
+        let mut painter = CardPainter::new(ops, bounds, &theme);
         if card.is_cover_sheet {
             painter.draw_cover_sheet(card);
         } else {
@@ -775,7 +838,8 @@ impl TableDrawer {
     /// Draws a styled grid table, advancing `cur_y` to the bottom of the table.
     pub fn draw(ops: &mut Vec<Op>, cur_y: &mut f32, spec: TableSpec<'_>, theme: &ScorecardTheme) {
         let top_y = *cur_y;
-        let total_h = spec.header_h + spec.row_h * (spec.rows.len() as f32);
+        let row_count = f32::from(u16::try_from(spec.rows.len()).unwrap_or(0));
+        let total_h = spec.header_h + spec.row_h * row_count;
         let bottom_y = top_y - total_h;
 
         Self::draw_header_background(ops, &spec, top_y, theme);
@@ -812,18 +876,20 @@ impl TableDrawer {
         let text_y = top_y - spec.header_h + (spec.header_h - theme.header_font_size) / 2.0 + 1.0;
         for col in spec.columns {
             let w = col.ratio * spec.tbl_w;
-            TextDrawer::draw(
-                ops,
-                TextSpec {
-                    text: col.header,
-                    cell_x: col_x,
-                    baseline_y: text_y,
-                    cell_w: w,
-                    font_size: theme.header_font_size,
-                    bold: true,
-                    align: col.align,
-                },
-            );
+            if !col.header.is_empty() {
+                TextDrawer::draw(
+                    ops,
+                    TextSpec {
+                        text: col.header,
+                        cell_x: col_x,
+                        baseline_y: text_y,
+                        cell_w: w,
+                        font_size: theme.header_font_size,
+                        bold: false,
+                        align: col.align,
+                    },
+                );
+            }
             col_x += w;
         }
     }
@@ -832,12 +898,19 @@ impl TableDrawer {
         let mut row_top = top_y - spec.header_h;
         for &row in spec.rows {
             let mut cell_x = spec.tbl_x;
-            let text_y = row_top - spec.row_h + (spec.row_h - theme.cell_font_size) / 2.0 + 1.0;
             for (i, &cell) in row.iter().enumerate() {
                 let col = spec.columns.get(i);
                 let w = col.map_or(0.0, |c| c.ratio * spec.tbl_w);
                 let align = col.map_or(TextAlign::Center, |c| c.align);
                 let bold = col.is_some_and(|c| c.bold);
+                let text_w = TextDrawer::estimate_width(cell, theme.cell_font_size, bold);
+                let max_w = (w - 6.0).max(10.0);
+                let font_size = if text_w > max_w {
+                    (theme.cell_font_size * (max_w / text_w)).max(6.0)
+                } else {
+                    theme.cell_font_size
+                };
+                let text_y = row_top - spec.row_h + (spec.row_h - font_size) / 2.0 + 1.0;
                 TextDrawer::draw(
                     ops,
                     TextSpec {
@@ -845,7 +918,7 @@ impl TableDrawer {
                         cell_x,
                         baseline_y: text_y,
                         cell_w: w,
-                        font_size: theme.cell_font_size,
+                        font_size,
                         bold,
                         align,
                     },
@@ -964,18 +1037,136 @@ impl TableDrawer {
     }
 }
 
-/// Helper struct for rendering text with Helvetica proportional font metrics and horizontal alignment.
+const HELVETICA_WIDTHS: [f32; 95] = [
+    0.278, 0.278, 0.355, 0.556, 0.556, 0.889, 0.667, 0.191, 0.333, 0.333, 0.389, 0.584, 0.278,
+    0.333, 0.278, 0.278, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556,
+    0.278, 0.278, 0.584, 0.584, 0.584, 0.556, 1.015, 0.667, 0.667, 0.722, 0.722, 0.667, 0.611,
+    0.778, 0.722, 0.278, 0.500, 0.667, 0.556, 0.833, 0.722, 0.778, 0.667, 0.778, 0.722, 0.667,
+    0.611, 0.722, 0.667, 0.944, 0.667, 0.667, 0.611, 0.278, 0.278, 0.278, 0.469, 0.556, 0.333,
+    0.556, 0.556, 0.500, 0.556, 0.556, 0.278, 0.556, 0.556, 0.222, 0.222, 0.500, 0.222, 0.833,
+    0.556, 0.556, 0.556, 0.556, 0.333, 0.500, 0.278, 0.556, 0.500, 0.722, 0.500, 0.500, 0.500,
+    0.334, 0.260, 0.334, 0.584,
+];
+
+const HELVETICA_BOLD_WIDTHS: [f32; 95] = [
+    0.278, 0.333, 0.474, 0.556, 0.556, 0.889, 0.722, 0.238, 0.333, 0.333, 0.389, 0.584, 0.278,
+    0.333, 0.278, 0.278, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556,
+    0.333, 0.333, 0.584, 0.584, 0.584, 0.611, 0.975, 0.722, 0.722, 0.722, 0.722, 0.667, 0.611,
+    0.778, 0.722, 0.278, 0.556, 0.722, 0.611, 0.833, 0.722, 0.778, 0.667, 0.778, 0.722, 0.667,
+    0.611, 0.722, 0.667, 0.944, 0.667, 0.667, 0.611, 0.333, 0.278, 0.333, 0.584, 0.556, 0.333,
+    0.556, 0.611, 0.556, 0.611, 0.556, 0.333, 0.611, 0.611, 0.278, 0.278, 0.556, 0.278, 0.889,
+    0.611, 0.611, 0.611, 0.611, 0.389, 0.556, 0.333, 0.611, 0.556, 0.778, 0.556, 0.556, 0.500,
+    0.389, 0.280, 0.389, 0.584,
+];
+
+/// Helper struct for rendering standard text with Helvetica proportional font metrics and horizontal alignment.
 pub struct TextDrawer;
 
 impl TextDrawer {
+    /// Subtle breathing space (in em) between unbolded parentheses and enclosed native/CJK characters.
+    pub const CJK_PAREN_PAD_EM: f32 = 0.10;
+
     pub fn draw(ops: &mut Vec<Op>, spec: TextSpec<'_>) {
         if spec.text.is_empty() {
             return;
         }
+
+        let text_w = Self::estimate_width(spec.text, spec.font_size, spec.bold);
+        let cur_x = Self::compute_aligned_x(spec.align, spec.cell_x, spec.cell_w, text_w);
         let font = Self::resolve_font(spec.bold);
-        let text_w = Self::estimate_width(spec.text, spec.font_size);
-        let x = Self::compute_aligned_x(spec.align, spec.cell_x, spec.cell_w, text_w);
-        Self::emit_text_ops(ops, font, spec.font_size, x, spec.baseline_y, spec.text);
+
+        Self::emit_text_ops(ops, font, spec.font_size, cur_x, spec.baseline_y, spec.text);
+    }
+
+    /// Renders a competitor name: bold Latin primary name followed optionally by unbolded parenthesized local name.
+    pub fn draw_competitor_name(
+        ops: &mut Vec<Op>,
+        primary: &str,
+        local: Option<&str>,
+        start_x: f32,
+        baseline_y: f32,
+        font_size: f32,
+        custom_font: Option<&FontId>,
+    ) {
+        let mut cur_x = start_x;
+
+        if !primary.is_empty() {
+            let font = if primary.chars().any(|c| !is_win_ansi(c)) {
+                if let Some(id) = custom_font {
+                    PdfFontHandle::External(id.clone())
+                } else {
+                    PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
+                }
+            } else {
+                PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
+            };
+            Self::emit_text_ops(ops, font, font_size, cur_x, baseline_y, primary);
+            cur_x += Self::estimate_width(primary, font_size, true);
+        }
+
+        if let Some(local_name) = local {
+            let paren_pad = Self::CJK_PAREN_PAD_EM * font_size;
+
+            let open_paren_str = if primary.is_empty() { "(" } else { " (" };
+            Self::emit_text_ops(
+                ops,
+                PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                font_size,
+                cur_x,
+                baseline_y,
+                open_paren_str,
+            );
+            cur_x += Self::estimate_width(open_paren_str, font_size, false) + paren_pad;
+
+            let local_font = if let Some(id) = custom_font {
+                PdfFontHandle::External(id.clone())
+            } else {
+                PdfFontHandle::Builtin(BuiltinFont::Helvetica)
+            };
+            Self::emit_text_ops(ops, local_font, font_size, cur_x, baseline_y, local_name);
+            cur_x += Self::estimate_cjk_width(local_name, font_size) + paren_pad;
+
+            Self::emit_text_ops(
+                ops,
+                PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                font_size,
+                cur_x,
+                baseline_y,
+                ")",
+            );
+        }
+    }
+
+    /// Calculates total width needed to render a competitor name with optional local name and unbolded parentheses.
+    pub fn estimate_competitor_name_width(
+        primary: &str,
+        local: Option<&str>,
+        font_size: f32,
+    ) -> f32 {
+        let mut total = if primary.is_empty() {
+            0.0
+        } else {
+            Self::estimate_width(primary, font_size, true)
+        };
+
+        if let Some(local_name) = local {
+            let open_str = if primary.is_empty() { "(" } else { " (" };
+            total += Self::estimate_width(open_str, font_size, false);
+            total += Self::CJK_PAREN_PAD_EM * font_size;
+            total += Self::estimate_cjk_width(local_name, font_size);
+            total += Self::CJK_PAREN_PAD_EM * font_size;
+            total += Self::estimate_width(")", font_size, false);
+        }
+
+        total
+    }
+
+    /// Measures width of CJK/native string using 1.0em for full-width CJK characters.
+    pub fn estimate_cjk_width(text: &str, font_size: f32) -> f32 {
+        text.chars()
+            .map(|c| if is_cjk(c) { 1.0 } else { 0.50 })
+            .sum::<f32>()
+            * font_size
     }
 
     fn resolve_font(bold: bool) -> PdfFontHandle {
@@ -994,7 +1185,7 @@ impl TextDrawer {
         }
     }
 
-    fn emit_text_ops(
+    pub fn emit_text_ops(
         ops: &mut Vec<Op>,
         font: PdfFontHandle,
         font_size: f32,
@@ -1002,55 +1193,131 @@ impl TextDrawer {
         y: f32,
         text: &str,
     ) {
-        ops.push(Op::SetFillColor { col: grey(0.0) });
-        ops.push(Op::StartTextSection);
-        ops.push(Op::SetFont {
-            font,
-            size: Pt(font_size),
-        });
-        ops.push(Op::SetTextCursor {
-            pos: Point { x: Pt(x), y: Pt(y) },
-        });
-        ops.push(Op::ShowText {
-            items: vec![TextItem::Text(text.to_string())],
-        });
-        ops.push(Op::EndTextSection);
+        ops.extend([
+            Op::SetFillColor { col: grey(0.0) },
+            Op::StartTextSection,
+            Op::SetFont {
+                font,
+                size: Pt(font_size),
+            },
+            Op::SetTextCursor {
+                pos: Point { x: Pt(x), y: Pt(y) },
+            },
+            Op::ShowText {
+                items: vec![TextItem::Text(text.to_string())],
+            },
+            Op::EndTextSection,
+        ]);
     }
 
-    /// Approximates proportional Helvetica font character widths for centering.
-    pub fn estimate_width(text: &str, font_size: f32) -> f32 {
-        text.chars().map(Self::char_raw_width).sum::<f32>() * font_size
+    fn raw_str_width(text: &str, font_size: f32, bold: bool) -> f32 {
+        text.chars()
+            .map(|ch| Self::char_raw_width(ch, bold))
+            .sum::<f32>()
+            * font_size
     }
 
-    fn char_raw_width(ch: char) -> f32 {
-        match ch {
-            ' ' => 0.28,
-            '.' | ',' | ':' | ';' | '!' | '|' | '\'' | '`' | 'i' | 'j' | 'l' | 'I' => 0.26,
-            'f' | 't' | '(' | ')' | '[' | ']' | '{' | '}' => 0.32,
-            'r' => 0.36,
-            'm' | 'w' | 'M' | 'W' => 0.78,
-            'A'..='Z' => 0.62,
-            '0'..='9' => 0.55,
-            _ => 0.50,
+    /// Approximates proportional Helvetica font character widths.
+    pub fn estimate_width(text: &str, font_size: f32, bold: bool) -> f32 {
+        Self::raw_str_width(text, font_size, bold)
+    }
+
+    fn char_raw_width(ch: char, bold: bool) -> f32 {
+        let code = u32::from(ch);
+        if (32..=126).contains(&code) {
+            let idx = usize::try_from(code - 32).unwrap_or(0);
+            if bold {
+                HELVETICA_BOLD_WIDTHS[idx]
+            } else {
+                HELVETICA_WIDTHS[idx]
+            }
+        } else if is_cjk(ch) {
+            1.0
+        } else {
+            0.50
         }
+    }
+}
+
+/// Returns true if the character is in CJK Unicode blocks (ideographs, Hangul, Kana).
+#[inline]
+pub fn is_cjk(ch: char) -> bool {
+    matches!(u32::from(ch),
+        0x4E00..=0x9FFF |
+        0x3400..=0x4DBF |
+        0x20000..=0x2A6DF |
+        0x2A700..=0x2B73F |
+        0x2B740..=0x2B81F |
+        0x2B820..=0x2CEAF |
+        0xF900..=0xFAFF |
+        0xAC00..=0xD7AF |
+        0x1100..=0x11FF |
+        0x3130..=0x318F |
+        0x3040..=0x309F |
+        0x30A0..=0x30FF |
+        0x3000..=0x303F |
+        0xFF01..=0xFF60 |
+        0xFFE0..=0xFFE6
+    )
+}
+
+/// Returns true if the character is directly encodable in standard PDF `WinAnsiEncoding`.
+#[inline]
+pub fn is_win_ansi(c: char) -> bool {
+    match u32::from(c) {
+        0x20..=0x7E | 0xA0..=0xFF => true,
+        _ => matches!(
+            c,
+            '\u{20AC}'
+                | '\u{201A}'
+                | '\u{0192}'
+                | '\u{201E}'
+                | '\u{2026}'
+                | '\u{2020}'
+                | '\u{2021}'
+                | '\u{02C6}'
+                | '\u{2030}'
+                | '\u{0160}'
+                | '\u{2039}'
+                | '\u{0152}'
+                | '\u{017D}'
+                | '\u{2018}'
+                | '\u{2019}'
+                | '\u{201C}'
+                | '\u{201D}'
+                | '\u{2022}'
+                | '\u{2013}'
+                | '\u{2014}'
+                | '\u{02DC}'
+                | '\u{2122}'
+                | '\u{0161}'
+                | '\u{203A}'
+                | '\u{0153}'
+                | '\u{017E}'
+                | '\u{0178}'
+        ),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scorecard::{ScorecardItem, TimeLimitInfo, WcaEvent, WcaResult};
+    use crate::scorecard::{Competitor, ScorecardItem, TimeLimitInfo, WcaEvent, WcaId, WcaResult};
 
     #[test]
     fn test_estimate_width() {
-        let w_space = TextDrawer::estimate_width(" ", 10.0);
-        assert!((w_space - 2.8).abs() < 0.01);
+        let w_space = TextDrawer::estimate_width(" ", 10.0, false);
+        assert!((w_space - 2.78).abs() < 0.01);
 
-        let w_digits = TextDrawer::estimate_width("12345", 10.0);
-        assert!((w_digits - 27.5).abs() < 0.01);
+        let w_digits = TextDrawer::estimate_width("12345", 10.0, false);
+        assert!((w_digits - 27.8).abs() < 0.01);
 
-        let w_empty = TextDrawer::estimate_width("", 10.0);
+        let w_empty = TextDrawer::estimate_width("", 10.0, false);
         assert_eq!(w_empty, 0.0);
+
+        let w_cjk_name = TextDrawer::estimate_competitor_name_width("", Some("张"), 10.0);
+        // "(" (3.33) + ")" (3.33) + "张" (10.0) + 2 * (0.10 * 10.0) (2.0) = 18.66
+        assert!((w_cjk_name - 18.66).abs() < 0.05);
     }
 
     #[test]
@@ -1063,9 +1330,12 @@ mod tests {
             round_number: 1,
             group_number: 1,
             stage_name: Some("Red Stage"),
-            competitor_name: "Alice Smith",
-            registrant_id: Some(1),
-            wca_id: Some("2022SMIT01"),
+            competitor: Some(Competitor {
+                name: "Alice Smith",
+                local_name: None,
+                registrant_id: std::num::NonZeroUsize::MIN,
+                wca_id: WcaId::parse("2022SMIT01"),
+            }),
             attempt_count: 5,
             time_limit_info: Some(TimeLimitInfo {
                 limit_centiseconds: WcaResult::new(60000),
@@ -1079,7 +1349,12 @@ mod tests {
         };
 
         let mut ops = Vec::new();
-        ScorecardRenderer::draw_card(&mut ops, &card, RectSpec::new(18.0, 18.0, 270.0, 380.0));
+        ScorecardRenderer::draw_card(
+            &mut ops,
+            &card,
+            RectSpec::new(18.0, 18.0, 270.0, 380.0),
+            None,
+        );
 
         // Verify that operations were generated (borders, rects, text items)
         assert!(!ops.is_empty());
@@ -1113,9 +1388,7 @@ mod tests {
             round_number: 1,
             group_number: 1,
             stage_name: Some("Main Hall"),
-            competitor_name: "",
-            registrant_id: None,
-            wca_id: None,
+            competitor: None,
             attempt_count: 5,
             time_limit_info: None,
             is_blank: false,
@@ -1128,6 +1401,7 @@ mod tests {
             &mut ops,
             &cover_card,
             RectSpec::new(18.0, 18.0, 270.0, 380.0),
+            None,
         );
 
         assert!(!ops.is_empty());
@@ -1157,9 +1431,7 @@ mod tests {
             round_number: 1,
             group_number: 1,
             stage_name: None,
-            competitor_name: "Alice Smith",
-            registrant_id: Some(1),
-            wca_id: None,
+            competitor: Some(Competitor::simple("Alice Smith")),
             attempt_count: 5,
             time_limit_info: None,
             is_blank: false,
@@ -1172,6 +1444,7 @@ mod tests {
             &mut ops_no_station,
             &card_no_station,
             RectSpec::new(18.0, 18.0, 270.0, 380.0),
+            None,
         );
         let has_station_header = ops_no_station.iter().any(|op| match op {
             Op::ShowText { items } => items.iter().any(|item| match item {
@@ -1194,6 +1467,7 @@ mod tests {
             &mut ops_with_station,
             &card_with_station,
             RectSpec::new(18.0, 18.0, 270.0, 380.0),
+            None,
         );
         let has_station_header_with = ops_with_station.iter().any(|op| match op {
             Op::ShowText { items } => items.iter().any(|item| match item {
@@ -1218,9 +1492,7 @@ mod tests {
             round_number: 1,
             group_number: 1,
             stage_name: None,
-            competitor_name: "Alice Smith",
-            registrant_id: Some(1),
-            wca_id: None,
+            competitor: Some(Competitor::simple("Alice Smith")),
             attempt_count: 5,
             time_limit_info: Some(TimeLimitInfo {
                 limit_centiseconds: WcaResult::new(60000),
@@ -1234,7 +1506,12 @@ mod tests {
         };
 
         let mut ops = Vec::new();
-        ScorecardRenderer::draw_card(&mut ops, &card, RectSpec::new(18.0, 18.0, 270.0, 380.0));
+        ScorecardRenderer::draw_card(
+            &mut ops,
+            &card,
+            RectSpec::new(18.0, 18.0, 270.0, 380.0),
+            None,
+        );
 
         // Verify that the cutoff banner text is rendered
         let has_cutoff_banner = ops.iter().any(|op| match op {
@@ -1288,9 +1565,7 @@ mod tests {
             round_number: 2,
             group_number: 1,
             stage_name: None,
-            competitor_name: "",
-            registrant_id: None,
-            wca_id: None,
+            competitor: None,
             attempt_count: 5,
             time_limit_info: None,
             is_blank: true,
@@ -1303,6 +1578,7 @@ mod tests {
             &mut ops,
             &blank_card,
             RectSpec::new(18.0, 18.0, 270.0, 380.0),
+            None,
         );
 
         let has_wca_id_header = ops.iter().any(|op| match op {
@@ -1328,5 +1604,78 @@ mod tests {
             !has_hyphen,
             "Blank scorecard must not print '-' in the ID space"
         );
+    }
+
+    #[test]
+    fn test_mixed_font_text_runs() {
+        let mut ops = Vec::new();
+        let custom_font = FontId("CustomFontTest".to_string());
+        TextDrawer::draw_competitor_name(
+            &mut ops,
+            "Marco Yang",
+            Some("杨柯辰"),
+            13.0,
+            100.0,
+            10.0,
+            Some(&custom_font),
+        );
+
+        let text_runs: Vec<String> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::ShowText { items } => items.first().and_then(|item| match item {
+                    printpdf::ops::TextItem::Text(s) => Some(s.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(text_runs, vec!["Marco Yang", " (", "杨柯辰", ")"]);
+
+        let font_handles: Vec<printpdf::ops::PdfFontHandle> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetFont { font, .. } => Some(font.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            font_handles,
+            vec![
+                printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
+                printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+                printpdf::ops::PdfFontHandle::External(FontId("CustomFontTest".to_string())),
+                printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+            ]
+        );
+
+        let cursor_x_positions: Vec<f32> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::SetTextCursor { pos } => Some(pos.x.0),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(cursor_x_positions.len(), 4);
+        let x_latin = cursor_x_positions[0];
+        let x_open = cursor_x_positions[1];
+        let x_cjk = cursor_x_positions[2];
+        let x_close = cursor_x_positions[3];
+
+        // 1. Initial position is 13.0
+        assert!((x_latin - 13.0).abs() < 1e-4);
+
+        // 2. Open paren starts after "Marco Yang"
+        assert!(x_open > x_latin);
+
+        // 3. CJK text starts after " (" PLUS paren_pad (0.10 * 10.0 = 1.0 pt)
+        let open_paren_w = TextDrawer::estimate_width(" (", 10.0, false);
+        assert!((x_cjk - (x_open + open_paren_w + 1.0)).abs() < 1e-4);
+
+        // 4. Close paren starts after "杨柯辰" (3 * 10.0 = 30.0 pt) PLUS paren_pad (1.0 pt)
+        assert!((x_close - (x_cjk + 30.0 + 1.0)).abs() < 1e-4);
     }
 }

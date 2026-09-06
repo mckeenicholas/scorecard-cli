@@ -50,12 +50,12 @@ impl AdvancementCalculator {
     }
 
     fn calculate_ranking_advancement(
-        val: Option<f64>,
+        val: Option<usize>,
         comp: &Competition,
         event: &Event,
         prev_idx: usize,
     ) -> AdvancementResult {
-        let limit = val.unwrap_or(16.0) as usize;
+        let limit = val.unwrap_or(16);
         let pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
         let capped = limit.min(pool);
         AdvancementResult {
@@ -67,14 +67,14 @@ impl AdvancementCalculator {
     }
 
     fn calculate_percent_advancement(
-        percent_val: Option<f64>,
+        percent_val: Option<usize>,
         comp: &Competition,
         event: &Event,
         prev_idx: usize,
     ) -> AdvancementResult {
-        let percent = percent_val.unwrap_or(75.0);
+        let percent = percent_val.unwrap_or(75);
         let prev_pool = Self::estimate_competitors_in_round(comp, event, prev_idx);
-        let calculated = (prev_pool as f64 * percent / 100.0).round() as usize;
+        let calculated = (prev_pool * percent + 50) / 100;
         AdvancementResult {
             blank_count: calculated,
             reason: format!(
@@ -93,9 +93,10 @@ impl AdvancementCalculator {
         let prev_pool = Self::estimate_competitors_in_round(comp, event, round_idx - 1);
         match prev_round.advancement_condition.as_ref() {
             Some(cond) => match cond.condition_type.as_str() {
-                "ranking" => (cond.value.unwrap_or(16.0) as usize).min(prev_pool),
+                "ranking" => cond.value.unwrap_or(16).min(prev_pool),
                 "percent" => {
-                    (prev_pool as f64 * cond.value.unwrap_or(75.0) / 100.0).round() as usize
+                    let percent = cond.value.unwrap_or(75);
+                    (prev_pool * percent + 50) / 100
                 }
                 _ => prev_pool.min(16),
             },
@@ -108,6 +109,7 @@ impl AdvancementCalculator {
 mod tests {
     use super::*;
     use crate::wcif::model::{AdvancementCondition, Person, Registration};
+    use std::num::NonZeroUsize;
 
     fn make_test_comp() -> Competition {
         Competition {
@@ -117,72 +119,56 @@ mod tests {
             short_name: None,
             persons: vec![
                 Person {
-                    registrant_id: Some(1),
+                    registrant_id: NonZeroUsize::new(1),
                     name: "Competitor 1".to_string(),
                     wca_id: None,
                     country_iso2: None,
-                    gender: None,
                     registration: Some(Registration {
-                        id: Some(1),
+                        id: NonZeroUsize::new(1),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(2),
+                    registrant_id: NonZeroUsize::new(2),
                     name: "Competitor 2".to_string(),
                     wca_id: None,
                     country_iso2: None,
-                    gender: None,
                     registration: Some(Registration {
-                        id: Some(2),
+                        id: NonZeroUsize::new(2),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(3),
+                    registrant_id: NonZeroUsize::new(3),
                     name: "Competitor 3".to_string(),
                     wca_id: None,
                     country_iso2: None,
-                    gender: None,
                     registration: Some(Registration {
-                        id: Some(3),
+                        id: NonZeroUsize::new(3),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![],
-                    personal_bests: vec![],
                 },
                 Person {
-                    registrant_id: Some(4),
+                    registrant_id: NonZeroUsize::new(4),
                     name: "Competitor 4".to_string(),
                     wca_id: None,
                     country_iso2: None,
-                    gender: None,
                     registration: Some(Registration {
-                        id: Some(4),
+                        id: NonZeroUsize::new(4),
                         status: Some("accepted".to_string()),
                         event_ids: vec!["333".to_string()],
                         is_competing: true,
                     }),
-                    avatar: None,
-                    roles: None,
                     assignments: vec![],
-                    personal_bests: vec![],
                 },
             ],
             events: vec![],
@@ -204,7 +190,7 @@ mod tests {
                     cutoff: None,
                     advancement_condition: Some(AdvancementCondition {
                         condition_type: "ranking".to_string(),
-                        value: Some(3.0),
+                        value: Some(3),
                     }),
                     scramble_group_count: 1,
                 },
@@ -236,7 +222,7 @@ mod tests {
                     cutoff: None,
                     advancement_condition: Some(AdvancementCondition {
                         condition_type: "ranking".to_string(),
-                        value: Some(12.0),
+                        value: Some(12),
                     }),
                     scramble_group_count: 1,
                 },
@@ -271,7 +257,7 @@ mod tests {
                     cutoff: None,
                     advancement_condition: Some(AdvancementCondition {
                         condition_type: "percent".to_string(),
-                        value: Some(50.0),
+                        value: Some(50),
                     }),
                     scramble_group_count: 1,
                 },

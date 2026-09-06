@@ -11,6 +11,7 @@ use mimalloc::MiMalloc;
 use options::{Cli, ResolvedOptions, SplitBy};
 use pdf::{PageLayout, PdfGenerationError, PdfGenerator};
 use scorecard::{PlannerError, ScorecardItem, ScorecardPlanner, WcaEvent};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs::File;
@@ -97,10 +98,10 @@ fn partition_scorecards<'a>(
     comp_id: &str,
     cards: &'a [ScorecardItem<'a>],
     split_by: &[SplitBy],
-) -> Vec<(String, Vec<ScorecardItem<'a>>)> {
+) -> Vec<(String, Cow<'a, [ScorecardItem<'a>]>)> {
     if split_by.is_empty() {
         let out_filename = format!("{comp_id}-scorecards.pdf");
-        return vec![(out_filename, cards.to_vec())];
+        return vec![(out_filename, Cow::Borrowed(cards))];
     }
 
     let has_stage = split_by.contains(&SplitBy::Stage);
@@ -118,7 +119,7 @@ fn partition_scorecards<'a>(
             },
         )
         .into_iter()
-        .map(|(k, v)| (k.to_filename(comp_id), v))
+        .map(|(k, v)| (k.to_filename(comp_id), Cow::Owned(v)))
         .collect()
 }
 
@@ -296,13 +297,13 @@ impl From<SplitError> for AppError {
 }
 
 fn validate_card_bundle_placement(
-    partitions: &[(String, Vec<ScorecardItem<'_>>)],
+    partitions: &[(String, Cow<'_, [ScorecardItem<'_>]>)],
 ) -> Result<(), SplitError> {
     let mut bundle_partition_map: std::collections::HashMap<BundleKey<'_>, &str> =
         std::collections::HashMap::new();
 
     for (filename, partition_cards) in partitions {
-        for card in partition_cards {
+        for card in partition_cards.as_ref() {
             if card.is_cover_sheet {
                 continue;
             }
@@ -332,7 +333,7 @@ fn validate_card_bundle_placement(
 }
 
 fn validate_split_compatibility(
-    partitions: &[(String, Vec<ScorecardItem<'_>>)],
+    partitions: &[(String, Cow<'_, [ScorecardItem<'_>]>)],
     options: &ResolvedOptions,
 ) -> Result<(), SplitError> {
     options.validate_compatibility()?;
@@ -387,7 +388,7 @@ fn generate_partitioned_pdfs(
     options: &ResolvedOptions,
 ) -> Result<(), AppError> {
     let layout = PageLayout::new(options.paper);
-    let generator = PdfGenerator::with_format(layout, options.format);
+    let generator = PdfGenerator::with_font_path(layout, options.format, options.font.clone());
     let partitions = partition_scorecards(&comp.id, cards, &options.split);
     validate_split_compatibility(&partitions, options)?;
     let is_multi = partitions.len() > 1;
@@ -398,8 +399,13 @@ fn generate_partitioned_pdfs(
 
     let mut total_pages = 0;
     for (out_filename, partition_cards) in &partitions {
-        let pages =
-            write_and_report_partition(&generator, comp, out_filename, partition_cards, is_multi)?;
+        let pages = write_and_report_partition(
+            &generator,
+            comp,
+            out_filename,
+            partition_cards.as_ref(),
+            is_multi,
+        )?;
         total_pages += pages;
     }
 
@@ -467,6 +473,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scorecard::Competitor;
+    use std::num::NonZeroUsize;
+
+    const ID1: NonZeroUsize = NonZeroUsize::MIN;
+    const ID2: NonZeroUsize = match NonZeroUsize::new(2) {
+        Some(n) => n,
+        None => unreachable!(),
+    };
 
     #[test]
     fn test_slugify() {
@@ -487,9 +501,12 @@ mod tests {
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Red Stage"),
-                competitor_name: "Alice",
-                registrant_id: Some(1),
-                wca_id: None,
+                competitor: Some(Competitor {
+                    name: "Alice",
+                    local_name: None,
+                    registrant_id: ID1,
+                    wca_id: None,
+                }),
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
@@ -504,9 +521,12 @@ mod tests {
                 round_number: 1,
                 group_number: 2,
                 stage_name: Some("Blue Stage"),
-                competitor_name: "Bob",
-                registrant_id: Some(2),
-                wca_id: None,
+                competitor: Some(Competitor {
+                    name: "Bob",
+                    local_name: None,
+                    registrant_id: ID2,
+                    wca_id: None,
+                }),
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
@@ -532,9 +552,12 @@ mod tests {
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Red Stage"),
-                competitor_name: "Alice",
-                registrant_id: Some(1),
-                wca_id: None,
+                competitor: Some(Competitor {
+                    name: "Alice",
+                    local_name: None,
+                    registrant_id: ID1,
+                    wca_id: None,
+                }),
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
@@ -549,9 +572,12 @@ mod tests {
                 round_number: 1,
                 group_number: 2,
                 stage_name: Some("Blue Stage"),
-                competitor_name: "Bob",
-                registrant_id: Some(2),
-                wca_id: None,
+                competitor: Some(Competitor {
+                    name: "Bob",
+                    local_name: None,
+                    registrant_id: ID2,
+                    wca_id: None,
+                }),
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
@@ -577,9 +603,12 @@ mod tests {
                 round_number: 1,
                 group_number: 1,
                 stage_name: Some("Red Stage"),
-                competitor_name: "Alice",
-                registrant_id: Some(1),
-                wca_id: None,
+                competitor: Some(Competitor {
+                    name: "Alice",
+                    local_name: None,
+                    registrant_id: ID1,
+                    wca_id: None,
+                }),
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
@@ -594,9 +623,12 @@ mod tests {
                 round_number: 1,
                 group_number: 2,
                 stage_name: Some("Red Stage"),
-                competitor_name: "Bob",
-                registrant_id: Some(2),
-                wca_id: None,
+                competitor: Some(Competitor {
+                    name: "Bob",
+                    local_name: None,
+                    registrant_id: ID2,
+                    wca_id: None,
+                }),
                 attempt_count: 5,
                 time_limit_info: None,
                 is_blank: false,
@@ -632,9 +664,12 @@ mod tests {
             round_number: 1,
             group_number: 1,
             stage_name: Some("Red Stage"),
-            competitor_name: "Alice",
-            registrant_id: Some(1),
-            wca_id: None,
+            competitor: Some(Competitor {
+                name: "Alice",
+                local_name: None,
+                registrant_id: ID1,
+                wca_id: None,
+            }),
             attempt_count: 5,
             time_limit_info: None,
             is_blank: false,
@@ -652,14 +687,23 @@ mod tests {
             ..Default::default()
         };
 
-        let partitions_ok = vec![("file1.pdf".to_string(), vec![card1])];
+        let partitions_ok = vec![(
+            "file1.pdf".to_string(),
+            Cow::Borrowed(std::slice::from_ref(&card1)),
+        )];
         assert!(validate_split_compatibility(&partitions_ok, &opts_cover_on).is_ok());
         assert!(validate_split_compatibility(&partitions_ok, &opts_cover_off).is_ok());
 
         // Split same bundle across two files
         let partitions_split = vec![
-            ("file1.pdf".to_string(), vec![card1]),
-            ("file2.pdf".to_string(), vec![card1]),
+            (
+                "file1.pdf".to_string(),
+                Cow::Borrowed(std::slice::from_ref(&card1)),
+            ),
+            (
+                "file2.pdf".to_string(),
+                Cow::Borrowed(std::slice::from_ref(&card1)),
+            ),
         ];
         assert!(validate_split_compatibility(&partitions_split, &opts_cover_on).is_err());
         assert!(validate_split_compatibility(&partitions_split, &opts_cover_off).is_ok());

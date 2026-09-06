@@ -1,7 +1,8 @@
 use super::events::WcaEvent;
-use crate::wcif::{Cutoff, TimeLimit};
+use crate::wcif::{Cutoff, Person, TimeLimit, WcaId};
 use std::borrow::Cow;
 use std::fmt::Write as _;
+use std::num::NonZeroUsize;
 
 /// Error returned when attempting to construct a [`WcaResult`] with an invalid value (< -2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +219,64 @@ impl TimeLimitInfo {
     }
 }
 
+/// Represents a competitor's identity on a scorecard without heap allocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Competitor<'a> {
+    pub name: &'a str,
+    pub local_name: Option<&'a str>,
+    pub registrant_id: NonZeroUsize,
+    pub wca_id: Option<WcaId>,
+}
+
+impl<'a> Competitor<'a> {
+    /// Creates a new `Competitor`.
+    pub const fn new(
+        name: &'a str,
+        local_name: Option<&'a str>,
+        registrant_id: NonZeroUsize,
+        wca_id: Option<WcaId>,
+    ) -> Self {
+        Self {
+            name,
+            local_name,
+            registrant_id,
+            wca_id,
+        }
+    }
+
+    /// Convenience constructor for tests with only a name (defaults `registrant_id` to 1).
+    pub const fn simple(name: &'a str) -> Self {
+        Self {
+            name,
+            local_name: None,
+            registrant_id: NonZeroUsize::MIN,
+            wca_id: None,
+        }
+    }
+
+    /// Constructs a `Competitor` from a WCIF `Person`.
+    pub fn from_person(person: &'a Person, print_one_name: bool) -> Self {
+        let (name, local_name) =
+            crate::scorecard::planner::format_competitor_name(&person.name, print_one_name);
+        Self {
+            name,
+            local_name,
+            registrant_id: person.registrant_id().unwrap_or(NonZeroUsize::MIN),
+            wca_id: person.wca_id,
+        }
+    }
+
+    /// Returns the `(primary_name, Option<local_name>)` pair.
+    pub fn display_name(&self) -> (&'a str, Option<&'a str>) {
+        (self.name, self.local_name)
+    }
+
+    /// Returns the WCA ID string or empty string.
+    pub fn display_wca_id(&self) -> &str {
+        self.wca_id.as_ref().map_or("", |w| w.as_str())
+    }
+}
+
 /// `ScorecardItem` contains the data needed to render a single scorecard without heap allocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScorecardItem<'a> {
@@ -228,9 +287,7 @@ pub struct ScorecardItem<'a> {
     pub round_number: usize,
     pub group_number: usize,
     pub stage_name: Option<&'a str>,
-    pub competitor_name: &'a str,
-    pub registrant_id: Option<usize>,
-    pub wca_id: Option<&'a str>,
+    pub competitor: Option<Competitor<'a>>,
     pub attempt_count: usize,
     pub time_limit_info: Option<TimeLimitInfo>,
     pub is_blank: bool,
@@ -249,9 +306,7 @@ impl Default for ScorecardItem<'static> {
             round_number: 1,
             group_number: 1,
             stage_name: Some("Main Stage"),
-            competitor_name: "Alice",
-            registrant_id: Some(1),
-            wca_id: None,
+            competitor: Some(Competitor::simple("Alice")),
             attempt_count: 5,
             time_limit_info: None,
             is_blank: false,
@@ -282,9 +337,7 @@ impl<'a> ScorecardItem<'a> {
         round_number: usize,
         group_number: usize,
         stage_name: Option<&'a str>,
-        competitor_name: &'a str,
-        registrant_id: Option<usize>,
-        wca_id: Option<&'a str>,
+        competitor: Competitor<'a>,
         station_number: Option<usize>,
         attempt_count: usize,
         time_limit_info: Option<TimeLimitInfo>,
@@ -297,9 +350,7 @@ impl<'a> ScorecardItem<'a> {
             round_number,
             group_number,
             stage_name,
-            competitor_name,
-            registrant_id,
-            wca_id,
+            competitor: Some(competitor),
             attempt_count,
             time_limit_info,
             is_blank: false,
@@ -327,9 +378,7 @@ impl<'a> ScorecardItem<'a> {
             round_number,
             group_number,
             stage_name,
-            competitor_name: "",
-            registrant_id: None,
-            wca_id: None,
+            competitor: None,
             attempt_count,
             time_limit_info: None,
             is_blank: false,
@@ -357,9 +406,7 @@ impl<'a> ScorecardItem<'a> {
             round_number,
             group_number,
             stage_name,
-            competitor_name: "",
-            registrant_id: None,
-            wca_id: None,
+            competitor: None,
             attempt_count,
             time_limit_info,
             is_blank: true,
@@ -368,22 +415,25 @@ impl<'a> ScorecardItem<'a> {
         }
     }
 
-    /// Returns formatted competitor name.
-    pub fn display_competitor_name(&self) -> &str {
-        if self.is_blank {
-            ""
-        } else {
-            self.competitor_name
-        }
+    /// Returns the primary competitor name string.
+    pub fn competitor_name(&self) -> &str {
+        self.competitor.map_or("", |c| c.name)
+    }
+
+    /// Returns formatted competitor name pair: `(primary_name, Option<local_name>)`.
+    pub fn display_competitor_name(&self) -> (&str, Option<&str>) {
+        self.competitor
+            .map_or(("", None), |c| (c.name, c.local_name))
     }
 
     /// Returns WCA ID string or empty string if none.
     pub fn display_wca_id(&self) -> &str {
-        if self.is_blank {
-            ""
-        } else {
-            self.wca_id.unwrap_or("")
-        }
+        self.competitor.as_ref().map_or("", |c| c.display_wca_id())
+    }
+
+    /// Returns registrant ID if present.
+    pub fn registrant_id(&self) -> Option<NonZeroUsize> {
+        self.competitor.map(|c| c.registrant_id)
     }
 
     /// Returns truncated competition name if exceeding `max_chars`.

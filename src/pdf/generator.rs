@@ -1,13 +1,15 @@
+use super::font::FontResolver;
 use super::layout::{PageFormat, PageLayout};
 use super::renderer::ScorecardRenderer;
 use crate::scorecard::ScorecardItem;
 use crate::wcif::Competition;
-use printpdf::PdfDocument;
 use printpdf::ops::PdfPage;
 use printpdf::serialize::PdfSaveOptions;
 use printpdf::units::Mm;
+use printpdf::{FontId, PdfDocument};
 use rayon::prelude::*;
 use std::io::Write;
+use std::path::PathBuf;
 
 /// Error encountered during PDF generation or file serialization.
 #[derive(Debug)]
@@ -50,6 +52,7 @@ impl From<std::io::Error> for PdfGenerationError {
 pub struct PdfGenerator {
     pub layout: PageLayout,
     pub format: PageFormat,
+    pub font_path: Option<PathBuf>,
 }
 
 impl PdfGenerator {
@@ -59,12 +62,27 @@ impl PdfGenerator {
         Self {
             layout,
             format: PageFormat::Group,
+            font_path: None,
         }
     }
 
     /// Creates a new `PdfGenerator` with specified layout and format.
+    #[cfg(test)]
     pub fn with_format(layout: PageLayout, format: PageFormat) -> Self {
-        Self { layout, format }
+        Self::with_font_path(layout, format, None)
+    }
+
+    /// Creates a new `PdfGenerator` with specified layout, format, and optional custom font path.
+    pub fn with_font_path(
+        layout: PageLayout,
+        format: PageFormat,
+        font_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            layout,
+            format,
+            font_path,
+        }
     }
 
     /// Generates a PDF containing all scorecards and streams directly to any Write destination (e.g. `BufWriter`<File>).
@@ -75,24 +93,35 @@ impl PdfGenerator {
         cards: &[ScorecardItem<'_>],
         writer: &mut W,
     ) -> Result<usize, PdfGenerationError> {
-        let pages = self.build_pages(cards);
+        let mut doc = PdfDocument::new(&comp.name);
+        let custom_font = FontResolver::resolve(self.font_path.as_deref());
+        let font_id = custom_font.as_ref().map(|f| doc.add_font(f));
+        let pages = self.build_pages(cards, font_id.as_ref());
         let page_count = pages.len();
-        let doc = Self::build_pdf_document(&comp.name, pages);
+        doc.pages = pages;
         Self::save_document_to_writer(&doc, writer)?;
         Ok(page_count)
     }
 
     /// Builds all PDF pages using parallel Rayon chunk processing.
-    pub fn build_pages(&self, cards: &[ScorecardItem<'_>]) -> Vec<PdfPage> {
+    pub fn build_pages(
+        &self,
+        cards: &[ScorecardItem<'_>],
+        font_id: Option<&FontId>,
+    ) -> Vec<PdfPage> {
         if self.format == PageFormat::Stacked && self.layout.cards_per_page > 1 {
-            self.build_stacked_pages(cards)
+            self.build_stacked_pages(cards, font_id)
         } else {
-            self.build_grouped_pages(cards)
+            self.build_grouped_pages(cards, font_id)
         }
     }
 
     /// Generates pages in stacked cutting order (card N on page P is followed by N+1 on page P at the same slot).
-    fn build_stacked_pages(&self, cards: &[ScorecardItem<'_>]) -> Vec<PdfPage> {
+    fn build_stacked_pages(
+        &self,
+        cards: &[ScorecardItem<'_>],
+        font_id: Option<&FontId>,
+    ) -> Vec<PdfPage> {
         let layout = self.layout;
         let total_cards = cards.len();
         let k = layout.cards_per_page;
@@ -107,7 +136,7 @@ impl PdfGenerator {
                     if card_idx < total_cards {
                         let card = &cards[card_idx];
                         let rect = layout.card_rect(slot);
-                        ScorecardRenderer::draw_card(&mut ops, card, rect);
+                        ScorecardRenderer::draw_card(&mut ops, card, rect, font_id);
                     }
                 }
                 PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
@@ -116,7 +145,11 @@ impl PdfGenerator {
     }
 
     /// Generates pages sequentially chunked by `cards_per_page`.
-    fn build_grouped_pages(&self, cards: &[ScorecardItem<'_>]) -> Vec<PdfPage> {
+    fn build_grouped_pages(
+        &self,
+        cards: &[ScorecardItem<'_>],
+        font_id: Option<&FontId>,
+    ) -> Vec<PdfPage> {
         let layout = self.layout;
         cards
             .par_chunks(layout.cards_per_page)
@@ -125,19 +158,12 @@ impl PdfGenerator {
 
                 for (idx, card) in chunk.iter().enumerate() {
                     let rect = layout.card_rect(idx);
-                    ScorecardRenderer::draw_card(&mut ops, card, rect);
+                    ScorecardRenderer::draw_card(&mut ops, card, rect, font_id);
                 }
 
                 PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
             })
             .collect()
-    }
-
-    /// Assembles a `PdfDocument` model from a list of generated `PdfPages`.
-    fn build_pdf_document(title: &str, pages: Vec<PdfPage>) -> PdfDocument {
-        let mut doc = PdfDocument::new(title);
-        doc.pages = pages;
-        doc
     }
 
     /// Serializes the document to the writer, compressing page streams for compact PDF output.
