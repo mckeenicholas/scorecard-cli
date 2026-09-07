@@ -14,10 +14,8 @@ impl WcaId {
 
     /// Parses a 10-character ASCII WCA ID (e.g. `"2022SMIT01"`). Returns `None` if invalid.
     pub fn parse(s: &str) -> Option<Self> {
-        let b = s.as_bytes();
-        if b.len() == 10 && b.is_ascii() {
-            let mut arr = [0u8; 10];
-            arr.copy_from_slice(b);
+        let arr: [u8; 10] = s.as_bytes().try_into().ok()?;
+        if arr.is_ascii() {
             Some(Self(arr))
         } else {
             None
@@ -66,13 +64,74 @@ impl Serialize for WcaId {
     }
 }
 
+struct WcaIdVisitor;
+
+impl serde::de::Visitor<'_> for WcaIdVisitor {
+    type Value = WcaId;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a 10-character ASCII WCA ID")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        WcaId::parse(v.trim()).ok_or_else(|| serde::de::Error::custom("invalid WCA ID format"))
+    }
+}
+
 impl<'de> Deserialize<'de> for WcaId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let s = <&str>::deserialize(deserializer)?;
-        WcaId::parse(s.trim()).ok_or_else(|| serde::de::Error::custom("invalid WCA ID format"))
+        deserializer.deserialize_str(WcaIdVisitor)
+    }
+}
+
+struct OptionalWcaIdVisitor;
+
+impl<'de> serde::de::Visitor<'de> for OptionalWcaIdVisitor {
+    type Value = Option<WcaId>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("null, empty string, or a 10-character ASCII WCA ID")
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(None)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(None)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            Ok(None)
+        } else {
+            WcaId::parse(trimmed)
+                .map(Some)
+                .ok_or_else(|| serde::de::Error::custom("invalid WCA ID format"))
+        }
     }
 }
 
@@ -81,13 +140,7 @@ pub fn deserialize_optional_wca_id<'de, D>(deserializer: D) -> Result<Option<Wca
 where
     D: Deserializer<'de>,
 {
-    let opt: Option<&str> = Option::deserialize(deserializer)?;
-    match opt {
-        Some(s) if !s.trim().is_empty() => WcaId::parse(s.trim())
-            .map(Some)
-            .ok_or_else(|| serde::de::Error::custom("invalid WCA ID format")),
-        _ => Ok(None),
-    }
+    deserializer.deserialize_option(OptionalWcaIdVisitor)
 }
 
 /// 2-character ASCII country code (ISO 3166-1 alpha-2, e.g. `"US"`, `"CA"`).
@@ -103,9 +156,9 @@ impl CountryIso2 {
 
     /// Parses a 2-character ASCII country code (e.g. `"US"`). Returns `None` if invalid.
     pub fn parse(s: &str) -> Option<Self> {
-        let b = s.as_bytes();
-        if b.len() == 2 && b.is_ascii() {
-            Some(Self([b[0], b[1]]))
+        let arr: [u8; 2] = s.as_bytes().try_into().ok()?;
+        if arr.is_ascii() {
+            Some(Self(arr))
         } else {
             None
         }
@@ -171,14 +224,75 @@ impl Serialize for CountryIso2 {
     }
 }
 
+struct CountryIso2Visitor;
+
+impl serde::de::Visitor<'_> for CountryIso2Visitor {
+    type Value = CountryIso2;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a 2-character ASCII country code")
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        CountryIso2::parse(v.trim())
+            .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format"))
+    }
+}
+
 impl<'de> Deserialize<'de> for CountryIso2 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let s = <&str>::deserialize(deserializer)?;
-        CountryIso2::parse(s.trim())
-            .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format"))
+        deserializer.deserialize_str(CountryIso2Visitor)
+    }
+}
+
+struct OptionalCountryIso2Visitor;
+
+impl<'de> serde::de::Visitor<'de> for OptionalCountryIso2Visitor {
+    type Value = Option<CountryIso2>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("null, empty string, or a 2-character ASCII country code")
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(None)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(None)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(self)
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            Ok(None)
+        } else {
+            CountryIso2::parse(trimmed)
+                .map(Some)
+                .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format"))
+        }
     }
 }
 
@@ -189,13 +303,7 @@ pub fn deserialize_optional_country_iso2<'de, D>(
 where
     D: Deserializer<'de>,
 {
-    let opt: Option<&str> = Option::deserialize(deserializer)?;
-    match opt {
-        Some(s) if !s.trim().is_empty() => CountryIso2::parse(s.trim())
-            .map(Some)
-            .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format")),
-        _ => Ok(None),
-    }
+    deserializer.deserialize_option(OptionalCountryIso2Visitor)
 }
 
 /// Represents a competitor or staff member.
@@ -257,23 +365,8 @@ impl Competition {
         self.schedule
             .as_ref()
             .into_iter()
-            .flat_map(|s| &s.venues)
-            .flat_map(|v| &v.rooms)
-            .flat_map(|r| {
-                let room_name = r.name.as_deref();
-                r.activities
-                    .iter()
-                    .flat_map(move |a| std::iter::once(a).chain(&a.child_activities))
-                    .map(move |a| {
-                        (
-                            a.id,
-                            ScheduledActivityInfo {
-                                activity_code: a.code.as_str(),
-                                room_name,
-                            },
-                        )
-                    })
-            })
+            .flat_map(Schedule::rooms)
+            .flat_map(Room::activity_entries)
             .collect()
     }
 
@@ -439,6 +532,13 @@ pub struct Schedule {
     pub venues: Vec<Venue>,
 }
 
+impl Schedule {
+    /// Iterates over all rooms across all venues in the schedule.
+    pub fn rooms(&self) -> impl Iterator<Item = &Room> {
+        self.venues.iter().flat_map(|v| &v.rooms)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Venue {
@@ -458,6 +558,25 @@ pub struct Room {
     pub activities: Vec<Activity>,
 }
 
+impl Room {
+    /// Returns an iterator over top-level and child activities paired with this room's name.
+    pub fn activity_entries(&self) -> impl Iterator<Item = (usize, ScheduledActivityInfo<'_>)> {
+        let room_name = self.name.as_deref();
+        self.activities
+            .iter()
+            .flat_map(Activity::with_children)
+            .map(move |a| {
+                (
+                    a.id,
+                    ScheduledActivityInfo {
+                        activity_code: &a.code,
+                        room_name,
+                    },
+                )
+            })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Activity {
@@ -471,6 +590,13 @@ pub struct Activity {
     pub child_activities: Vec<Activity>,
     #[serde(default)]
     pub scramble_set_id: Option<usize>,
+}
+
+impl Activity {
+    /// Iterates over this activity and all of its immediate child activities.
+    pub fn with_children(&self) -> impl Iterator<Item = &Activity> {
+        std::iter::once(self).chain(&self.child_activities)
+    }
 }
 
 /// Generic WCIF extension container.

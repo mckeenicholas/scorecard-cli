@@ -1,6 +1,8 @@
 use super::model::Competition;
 use std::path::Path;
 
+const DOWNLOAD_FETCH_LIMIT: u64 = 100 * 1024 * 1024; // 100 MB
+
 /// Expands leading `~` or `~/` to the user's home directory.
 pub fn expand_tilde<P: AsRef<Path>>(path: P) -> std::path::PathBuf {
     let p = path.as_ref();
@@ -109,17 +111,15 @@ impl WcifLoader {
     /// Fetches the public WCIF JSON for a competition ID from the WCA API.
     pub fn fetch_from_wca(comp_id: &str) -> Result<Competition, WcifLoadError> {
         let spinner = crate::progress::create_spinner(format!("Fetching WCIF for '{comp_id}'..."));
-        let bytes = Self::fetch_wca_api_bytes(comp_id, &spinner)?;
+        let comp = Self::fetch_wca_api_competition(comp_id, &spinner)?;
         spinner.finish_and_clear();
-
-        let comp = Competition::from_json_bytes(&bytes)?;
         Ok(comp)
     }
 
-    fn fetch_wca_api_bytes(
+    fn fetch_wca_api_competition(
         comp_id: &str,
         spinner: &indicatif::ProgressBar,
-    ) -> Result<Vec<u8>, WcifLoadError> {
+    ) -> Result<Competition, WcifLoadError> {
         let api_url = format!(
             "https://www.worldcubeassociation.org/api/v0/competitions/{comp_id}/wcif/public"
         );
@@ -145,7 +145,11 @@ impl WcifLoader {
 
         spinner.set_message(format!("Downloading and parsing WCIF for '{comp_id}'..."));
 
-        let bytes = resp.body_mut().read_to_vec()?;
-        Ok(bytes)
+        let comp: Competition = resp
+            .body_mut()
+            .with_config()
+            .limit(DOWNLOAD_FETCH_LIMIT)
+            .read_json()?;
+        Ok(comp)
     }
 }

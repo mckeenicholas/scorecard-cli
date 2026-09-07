@@ -301,36 +301,8 @@ fn get_path_suggestions(query: &str) -> Vec<Suggestion> {
         .collect()
 }
 
-/// Queries the WCA API for competitions matching the search term.
-fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, ureq::Error> {
-    let agent: ureq::Agent = ureq::config::Config::builder()
-        .timeout_global(Some(Duration::from_millis(2500)))
-        .http_status_as_error(false)
-        .build()
-        .into();
-
-    let mut encoded_query = String::with_capacity(query.len() * 3);
-    for b in query.as_bytes() {
-        match b {
-            b' ' => encoded_query.push_str("%20"),
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                encoded_query.push(char::from(*b));
-            }
-            _ => {
-                use std::fmt::Write as _;
-                let _ = write!(encoded_query, "%{b:02X}");
-            }
-        }
-    }
-    let url = format!("https://www.worldcubeassociation.org/api/v0/competitions?q={encoded_query}");
-
-    let mut resp = agent.get(&url).call()?;
-
-    if !resp.status().is_success() {
-        return Ok(Vec::new());
-    }
-
-    let items: Vec<WcaItem> = resp.body_mut().read_json()?;
+/// Converts deserialized WCA items into formatted interactive suggestions.
+fn wca_items_to_suggestions(items: Vec<WcaItem>) -> Vec<Suggestion> {
     let id_width = items
         .iter()
         .take(8)
@@ -339,7 +311,7 @@ fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, ureq::Error> {
         .unwrap_or(20)
         .max(20);
 
-    let suggestions = items
+    items
         .into_iter()
         .take(8)
         .map(|item| {
@@ -350,9 +322,28 @@ fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, ureq::Error> {
                 display,
             }
         })
-        .collect();
+        .collect()
+}
 
-    Ok(suggestions)
+/// Queries the WCA API for competitions matching the search term.
+fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, ureq::Error> {
+    let agent: ureq::Agent = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_millis(2500)))
+        .http_status_as_error(false)
+        .build()
+        .into();
+
+    let mut resp = agent
+        .get("https://www.worldcubeassociation.org/api/v0/competitions")
+        .query("q", query)
+        .call()?;
+
+    if !resp.status().is_success() {
+        return Ok(Vec::new());
+    }
+
+    let items: Vec<WcaItem> = resp.body_mut().read_json()?;
+    Ok(wca_items_to_suggestions(items))
 }
 
 /// Formats a WCA competition search suggestion into two aligned columns: ID and Name (with country).

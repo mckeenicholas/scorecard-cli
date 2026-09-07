@@ -1,4 +1,5 @@
 use clap::ValueEnum;
+use printpdf::units::Mm;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -36,12 +37,7 @@ impl FromStr for PaperSize {
     type Err = ParsePaperSizeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "a4" => Ok(PaperSize::A4),
-            "letter" => Ok(PaperSize::Letter),
-            "a6" => Ok(PaperSize::A6),
-            other => Err(ParsePaperSizeError(other.to_string())),
-        }
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParsePaperSizeError(s.to_string()))
     }
 }
 
@@ -86,11 +82,7 @@ impl FromStr for PageFormat {
     type Err = ParsePageFormatError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "group" => Ok(PageFormat::Group),
-            "stacked" => Ok(PageFormat::Stacked),
-            other => Err(ParsePageFormatError(other.to_string())),
-        }
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParsePageFormatError(s.to_string()))
     }
 }
 
@@ -117,8 +109,6 @@ impl PaperSize {
     const A4_MM: (f32, f32) = (210.0, 297.0);
     const LETTER_MM: (f32, f32) = (215.9, 279.4);
 
-    const MM_TO_PT: f32 = 2.834_645_7;
-
     /// Physical paper dimensions in millimeters (width, height).
     pub fn dimensions_mm(self) -> (f32, f32) {
         match self {
@@ -128,13 +118,10 @@ impl PaperSize {
         }
     }
 
-    fn to_ps(dimensions: (f32, f32)) -> (f32, f32) {
-        (dimensions.0 * Self::MM_TO_PT, dimensions.1 * Self::MM_TO_PT)
-    }
-
     /// Physical paper dimensions in PostScript points (width, height).
     pub fn dimensions_pt(self) -> (f32, f32) {
-        Self::to_ps(self.dimensions_mm())
+        let (w, h) = self.dimensions_mm();
+        (Mm(w).into_pt().0, Mm(h).into_pt().0)
     }
 
     /// Number of scorecard cards printable per sheet for this paper size.

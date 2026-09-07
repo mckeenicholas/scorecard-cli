@@ -16,7 +16,13 @@ pub enum SplitBy {
     Event,
     #[value(name = "group", alias = "groups", alias = "g")]
     Group,
-    #[value(name = "stage", alias = "stages", alias = "room", alias = "rooms")]
+    #[value(
+        name = "stage",
+        alias = "stages",
+        alias = "room",
+        alias = "rooms",
+        alias = "s"
+    )]
     Stage,
 }
 
@@ -50,12 +56,7 @@ impl std::str::FromStr for SplitBy {
     type Err = ParseSplitByError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "event" | "events" | "e" => Ok(SplitBy::Event),
-            "group" | "groups" | "g" => Ok(SplitBy::Group),
-            "stage" | "stages" | "room" | "rooms" | "s" => Ok(SplitBy::Stage),
-            other => Err(ParseSplitByError(other.to_string())),
-        }
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParseSplitByError(s.to_string()))
     }
 }
 
@@ -131,13 +132,7 @@ impl std::str::FromStr for CoverSheetBy {
     type Err = ParseCoverSheetByError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "round" | "rounds" | "r" | "event" | "events" | "e" => Ok(CoverSheetBy::Round),
-            "group" | "groups" | "g" => Ok(CoverSheetBy::Group),
-            "stage" | "stages" | "room" | "rooms" | "s" => Ok(CoverSheetBy::Stage),
-            "none" | "false" | "off" => Ok(CoverSheetBy::None),
-            other => Err(ParseCoverSheetByError(other.to_string())),
-        }
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParseCoverSheetByError(s.to_string()))
     }
 }
 

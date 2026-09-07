@@ -660,30 +660,31 @@ impl<'a> CardPainter<'a> {
         self.cur_y = y_bot;
     }
 
-    /// Draws a square checkbox followed by a label on cover sheets (centered).
+    /// Draws a text label followed by a square checkbox on cover sheets (centered).
     pub fn draw_checkbox_item(&mut self, text: &str) {
         let box_size = 8.0f32;
         let gap = 6.0f32;
         let text_w = TextDrawer::estimate_width(text, 8.5, false);
-        let total_w = box_size + gap + text_w;
+        let total_w = text_w + gap + box_size;
         let start_x = self.inner_x + (self.inner_w - total_w) / 2.0;
         let box_y = self.cur_y - 1.0;
-
-        self.set_outline(0.2, 0.75);
-        self.draw_stroked_rect(RectSpec::new(start_x, box_y, box_size, box_size));
 
         TextDrawer::draw(
             self.ops,
             TextSpec {
                 text,
-                cell_x: start_x + box_size + gap,
+                cell_x: start_x,
                 baseline_y: self.cur_y,
-                cell_w: text_w + 4.0,
+                cell_w: text_w + 2.0,
                 font_size: 8.5,
                 bold: false,
                 align: TextAlign::Left,
             },
         );
+
+        let box_x = start_x + text_w + gap;
+        self.set_outline(0.2, 0.75);
+        self.draw_stroked_rect(RectSpec::new(box_x, box_y, box_size, box_size));
     }
 
     /// Draws a text label followed by a horizontal fill-in underline for signatures/initials (centered).
