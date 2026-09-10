@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::{self, Stylize};
+use crossterm::style::{self, Stylize as _};
 use crossterm::terminal::{self, ClearType};
 use crossterm::{cursor, queue};
 
@@ -47,7 +47,7 @@ pub fn spawn_search_worker(rx: mpsc::Receiver<String>, shared: Arc<Mutex<SharedS
                 current_query = newer_query;
             }
 
-            let trimmed = current_query.trim().to_string();
+            let trimmed = current_query.trim().to_owned();
             let is_path_query = trimmed.starts_with('~')
                 || trimmed.starts_with('/')
                 || trimmed.starts_with('\\')
@@ -209,7 +209,7 @@ pub fn handle_search_key(
             let chosen = if let Some(idx) = *state.selected_index {
                 state.suggestions[idx].value.clone()
             } else {
-                state.input_buffer.trim().to_string()
+                state.input_buffer.trim().to_owned()
             };
 
             if chosen.is_empty() {
@@ -322,17 +322,18 @@ pub fn prompt_competition_source() -> Result<String, InteractiveError> {
             last_loading = state.is_loading;
         }
 
-        // Collect current suggestions
-        let local_suggestions = suggest::get_local_json_suggestions(&input_buffer);
-        let (api_suggestions, is_loading) = {
-            let state = shared.lock().unwrap();
-            (state.api_results.clone(), state.is_loading)
-        };
+        let (suggestions, is_loading) = {
+            // Some weirdness to avoid extra allocs here, should probably cleanup
+            let (mut api_suggestions, is_loading) = {
+                let state = shared.lock().unwrap();
+                (state.api_results.clone(), state.is_loading)
+            };
 
-        let mut suggestions = local_suggestions;
-        let mut api_suggestions = api_suggestions;
-        api_suggestions.retain(|api| !suggestions.iter().any(|s| s.value == api.value));
-        suggestions.extend(api_suggestions);
+            let mut local_suggestions = suggest::get_local_json_suggestions(&input_buffer);
+            api_suggestions.retain(|api| !local_suggestions.iter().any(|s| s.value == api.value));
+            local_suggestions.extend(api_suggestions);
+            (local_suggestions, is_loading)
+        };
 
         // Clamp selected index
         if let Some(idx) = selected_index {

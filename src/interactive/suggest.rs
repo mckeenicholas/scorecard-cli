@@ -41,7 +41,7 @@ pub fn get_relative_json_suggestions(query: &str) -> Vec<Suggestion> {
             if path.extension().is_some_and(|ext| ext == "json")
                 && let Some(s) = path.to_str()
             {
-                let clean = s.trim_start_matches("./").to_string();
+                let clean = s.trim_start_matches("./").to_owned();
                 if query_lower.is_empty() || clean.to_lowercase().contains(&query_lower) {
                     return Some(clean);
                 }
@@ -64,16 +64,16 @@ pub fn get_relative_json_suggestions(query: &str) -> Vec<Suggestion> {
 
 pub fn parse_path_query(query: &str) -> (PathBuf, String, &str) {
     if query == "~" {
-        (wcif::expand_tilde("~"), "~/".to_string(), "")
+        (wcif::expand_tilde("~"), "~/".to_owned(), "")
     } else if let Some(last_sep) = query.rfind(['/', '\\']) {
         let parent_str = &query[..=last_sep];
         let filter = &query[last_sep + 1..];
         let scan_path = wcif::expand_tilde(parent_str);
-        (scan_path, parent_str.to_string(), filter)
+        (scan_path, parent_str.to_owned(), filter)
     } else {
         (
             wcif::expand_tilde("~"),
-            "~/".to_string(),
+            "~/".to_owned(),
             query.trim_start_matches('~'),
         )
     }

@@ -634,8 +634,8 @@ impl ScorecardPlan<'_> {
         }
 
         if !self.summaries.is_empty() {
-            lines.push("Event      Round      Status       Competitors".to_string());
-            lines.push("────────   ────────   ──────────   ──────────────".to_string());
+            lines.push("Event      Round      Status       Competitors".to_owned());
+            lines.push("────────   ────────   ──────────   ──────────────".to_owned());
 
             for summary in &self.summaries {
                 row_buf.clear();

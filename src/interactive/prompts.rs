@@ -29,7 +29,7 @@ pub fn prompt_competition_and_load() -> Result<(String, Competition), Interactiv
         match WcifLoader::load(trimmed) {
             Ok(c) => {
                 println!("Loaded competition: {} ({})\n", c.name, c.id);
-                return Ok((trimmed.to_string(), c));
+                return Ok((trimmed.to_owned(), c));
             }
             Err(e) => {
                 println!("Could not load competition '{trimmed}': {e}. Please try again.\n");
@@ -49,13 +49,13 @@ pub fn prompt_rounds_selection(comp: &Competition) -> Result<Vec<String>, Intera
         .filter(|e| e.id != "333fm")
         .flat_map(|event| {
             let event_name = events::event_name_by_id(&event.id).unwrap_or(&event.id);
-            let wca_event = WcaEvent::from_id(&event.id);
+            let opt_wca_event = WcaEvent::from_id(&event.id);
             event
                 .rounds
                 .iter()
                 .enumerate()
                 .filter_map(move |(round_idx, round)| {
-                    let wca_event = wca_event?;
+                    let wca_event = opt_wca_event?;
                     let round_num = u32::try_from(round_idx + 1).ok()?;
                     let round_id = RoundId::new(wca_event, round_num);
                     Some(RoundChoice {

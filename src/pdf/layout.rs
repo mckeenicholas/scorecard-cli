@@ -39,7 +39,7 @@ impl FromStr for PaperSize {
     type Err = ParsePaperSizeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParsePaperSizeError(s.to_string()))
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParsePaperSizeError(s.to_owned()))
     }
 }
 
@@ -84,7 +84,7 @@ impl FromStr for PageFormat {
     type Err = ParsePageFormatError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParsePageFormatError(s.to_string()))
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParsePageFormatError(s.to_owned()))
     }
 }
 

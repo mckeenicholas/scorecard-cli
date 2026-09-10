@@ -66,9 +66,9 @@ fn matches_round_activity(activity_code: &str, round_target: ActivityCode) -> bo
             .strip_prefix(round_target.event.code())
             .and_then(|rem| rem.strip_prefix("-r"))
             .and_then(|rem| {
-                let (r_str, rem) = rem.split_once("-g").unwrap_or((rem, ""));
+                let (r_str, group_rem) = rem.split_once("-g").unwrap_or((rem, ""));
                 (r_str.parse::<RoundNumber>().ok() == Some(round_target.round_number))
-                    .then_some(rem)
+                    .then_some(group_rem)
             })
             .is_some_and(|rem| rem.is_empty() || rem.starts_with("-g"))
     }
@@ -77,14 +77,11 @@ fn matches_round_activity(activity_code: &str, round_target: ActivityCode) -> bo
 #[inline]
 fn extract_group_number(activity_code: &str, round_target: ActivityCode) -> Option<GroupNumber> {
     if let Some(code) = ActivityCode::parse(activity_code) {
-        if code.matches_round(round_target.event, round_target.round_number) {
-            Some(code.group_or_default())
-        } else {
-            None
-        }
+        code.matches_round(round_target.event, round_target.round_number)
+            .then(|| code.group_or_default())
     } else {
-        let rem = activity_code.strip_prefix(round_target.event.code())?;
-        let rem = rem.strip_prefix("-r")?;
+        let event_rem = activity_code.strip_prefix(round_target.event.code())?;
+        let rem = event_rem.strip_prefix("-r")?;
         let (r_str, group_rem) = rem.split_once("-g").unwrap_or((rem, ""));
         if r_str.parse::<RoundNumber>().ok() != Some(round_target.round_number) {
             return None;
@@ -151,7 +148,7 @@ fn find_event_and_round<'a>(
         .events
         .iter()
         .find(|e| e.id == target.round_id.event.code())
-        .ok_or_else(|| PlannerError::EventNotFound(target.round_id.event.code().to_string()))?;
+        .ok_or_else(|| PlannerError::EventNotFound(target.round_id.event.code().to_owned()))?;
 
     let round = event
         .rounds
@@ -249,7 +246,7 @@ fn collect_open_round_competitors<'a>(
     for person in ctx.comp.accepted_competitors_for_event(&ctx.event.id) {
         let assignment = resolve_assignment(person, ctx.activity_map, ctx.target.activity_code());
 
-        let (group_num, station_num, stage_name) = match assignment {
+        let (group_num, assigned_station, stage_name) = match assignment {
             Some(a) => a,
             None => {
                 if ctx.target.round_id.round_number == 1 {
@@ -261,7 +258,7 @@ fn collect_open_round_competitors<'a>(
         };
 
         let station_num = if ctx.print_stations {
-            station_num
+            assigned_station
         } else {
             None
         };
@@ -272,7 +269,7 @@ fn collect_open_round_competitors<'a>(
                 format_competitor_name(&person.name, ctx.print_one_name, ctx.local_names_first);
             sample_names.push(match local {
                 Some(loc) => format!("{primary} ({loc})"),
-                None => primary.to_string(),
+                None => primary.to_owned(),
             });
         }
 
@@ -491,13 +488,13 @@ impl ScorecardPlanner {
         activity_map: &'a FxHashMap<usize, ScheduledActivityInfo<'a>>,
         event: &'a Event,
     ) -> impl Iterator<Item = GenerationTarget> + 'a {
-        let wca_event = WcaEvent::from_id(&event.id);
+        let opt_wca_event = WcaEvent::from_id(&event.id);
         event
             .rounds
             .iter()
             .enumerate()
             .filter_map(move |(idx, _round)| {
-                let wca_event = wca_event?;
+                let wca_event = opt_wca_event?;
                 let round_number = u32::try_from(idx + 1).ok()?;
                 let round_id = RoundId::new(wca_event, round_number);
                 let round_activity = ActivityCode::from_round(round_id);
@@ -537,7 +534,7 @@ impl ScorecardPlanner {
             if parsed.event == WcaEvent::E333Fm {
                 notes.push(
                     "Skipping '333fm' (3x3x3 Fewest Moves) as it does not use scorecards."
-                        .to_string(),
+                        .to_owned(),
                 );
                 continue;
             }

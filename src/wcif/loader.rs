@@ -136,12 +136,12 @@ impl WcifLoader {
 
         let status = resp.status().as_u16();
         if status == 404 {
-            return Err(WcifLoadError::NotFound(comp_id.to_string()));
+            return Err(WcifLoadError::NotFound(comp_id.to_owned()));
         }
         if !resp.status().is_success() {
             return Err(WcifLoadError::ApiStatus {
                 status,
-                comp_id: comp_id.to_string(),
+                comp_id: comp_id.to_owned(),
             });
         }
 

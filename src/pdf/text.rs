@@ -202,7 +202,7 @@ impl TextDrawer {
                 pos: Point { x: Pt(x), y: Pt(y) },
             },
             Op::ShowText {
-                items: vec![TextItem::Text(text.to_string())],
+                items: vec![TextItem::Text(text.to_owned())],
             },
             Op::EndTextSection,
         ]);

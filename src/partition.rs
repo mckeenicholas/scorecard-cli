@@ -82,11 +82,7 @@ pub fn build_split_key(
     };
 
     SplitKey {
-        stage: if has_stage {
-            Some(slugify(stage_name.unwrap_or("no-stage")))
-        } else {
-            None
-        },
+        stage: has_stage.then(|| slugify(stage_name.unwrap_or("no-stage"))),
         event: if has_event && let Some(ev) = event {
             Some(RoundId::new(ev, round_number))
         } else {
@@ -132,7 +128,7 @@ pub fn write_pdf_file(
     cards: &[ScorecardItem<'_>],
 ) -> Result<usize, crate::AppError> {
     let file = File::create(filename).map_err(|source| crate::AppError::CreatePdf {
-        path: filename.to_string(),
+        path: filename.to_owned(),
         source,
     })?;
     let mut writer = BufWriter::with_capacity(BUFFER_SIZE, file);
@@ -148,7 +144,7 @@ pub fn write_pdf_file(
         Err(source) => {
             spinner.finish_and_clear();
             return Err(crate::AppError::GeneratePdf {
-                path: filename.to_string(),
+                path: filename.to_owned(),
                 source,
             });
         }
@@ -236,10 +232,10 @@ pub fn validate_card_bundle_placement(
             if let Some(existing_file) = bundle_partition_map.get(&bundle_key) {
                 if *existing_file != filename.as_str() {
                     return Err(SplitError::SplitBundle {
-                        event_id: event.code().to_string(),
+                        event_id: event.code().to_owned(),
                         round_number,
                         group_number,
-                        first_file: existing_file.to_string(),
+                        first_file: (*existing_file).to_owned(),
                         second_file: filename.clone(),
                     });
                 }

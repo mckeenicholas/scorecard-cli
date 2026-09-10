@@ -150,7 +150,7 @@ impl TryFrom<&str> for WcaEvent {
     type Error = ParseEventError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::from_id(value).ok_or_else(|| ParseEventError(value.to_string()))
+        Self::from_id(value).ok_or_else(|| ParseEventError(value.to_owned()))
     }
 }
 
@@ -227,7 +227,7 @@ impl TryFrom<&str> for RoundId {
     type Error = ParseRoundIdError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::parse(value).ok_or_else(|| ParseRoundIdError(value.to_string()))
+        Self::parse(value).ok_or_else(|| ParseRoundIdError(value.to_owned()))
     }
 }
 
@@ -350,7 +350,7 @@ impl TryFrom<&str> for ActivityCode {
     type Error = ParseActivityCodeError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::parse(value).ok_or_else(|| ParseActivityCodeError(value.to_string()))
+        Self::parse(value).ok_or_else(|| ParseActivityCodeError(value.to_owned()))
     }
 }
 

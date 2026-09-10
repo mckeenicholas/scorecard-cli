@@ -66,7 +66,7 @@ impl AttemptTableSpec {
             / Self::BASE_ATTEMPT_ROWS)
             .max(13.5);
 
-        let cutoff_banner = if has_cutoff {
+        let cutoff_banner = has_cutoff.then(|| {
             let cutoff = time_limit_info
                 .and_then(|info| info.cutoff_centiseconds)
                 .unwrap_or_default();
@@ -80,10 +80,8 @@ impl AttemptTableSpec {
                 banner,
                 "-------- Must have solve under {cutoff} to complete {format_name} --------"
             );
-            Some(banner)
-        } else {
-            None
-        };
+            banner
+        });
 
         let total_banners = if has_cutoff { 2.0 } else { 1.0 };
         let total_attempts = f32::from(u16::try_from(attempt_count + 1).unwrap_or(6));

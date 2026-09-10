@@ -11,7 +11,7 @@ use std::fmt::{self, Display, Formatter};
 use std::io::Error as IoError;
 use std::{env, process};
 
-use clap::Parser;
+use clap::Parser as _;
 use interactive::InteractiveError;
 use mimalloc::MiMalloc;
 use options::{Cli, ResolvedOptions};
@@ -96,9 +96,9 @@ impl From<SplitError> for AppError {
 
 fn load_competition(source: &str) -> Result<wcif::Competition, wcif::WcifLoadError> {
     let spinner = progress::create_spinner(format!("Loading WCIF from: {source}..."));
-    let comp = WcifLoader::load(source);
+    let comp_res = WcifLoader::load(source);
     spinner.finish_and_clear();
-    let comp = comp?;
+    let comp = comp_res?;
     println!("✔ Loaded competition: {} ({})", comp.name, comp.id);
     Ok(comp)
 }

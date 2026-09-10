@@ -55,7 +55,7 @@ impl FromStr for SplitBy {
     type Err = ParseSplitByError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParseSplitByError(s.to_string()))
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParseSplitByError(s.to_owned()))
     }
 }
 
@@ -131,7 +131,7 @@ impl FromStr for CoverSheetBy {
     type Err = ParseCoverSheetByError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParseCoverSheetByError(s.to_string()))
+        <Self as ValueEnum>::from_str(s, true).map_err(|_| ParseCoverSheetByError(s.to_owned()))
     }
 }
 

@@ -159,15 +159,11 @@ impl PdfGenerator {
         font_id: Option<&FontId>,
     ) -> Vec<PdfPage> {
         let layout = self.layout;
-        let padded_cards;
-        let cards = if self.start_group_on_new_page && layout.cards_per_page > 1 {
-            padded_cards = Self::pad_groups_to_page_boundaries(cards, layout.cards_per_page);
-            &padded_cards[..]
-        } else {
-            cards
-        };
+        let padded_cards = (self.start_group_on_new_page && layout.cards_per_page > 1)
+            .then(|| Self::pad_groups_to_page_boundaries(cards, layout.cards_per_page));
+        let effective_cards = padded_cards.as_deref().unwrap_or(cards);
 
-        cards
+        effective_cards
             .par_chunks(layout.cards_per_page)
             .map(|chunk| {
                 let mut ops = Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });

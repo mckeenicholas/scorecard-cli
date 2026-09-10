@@ -205,52 +205,52 @@ impl ResolvedOptions {
         let red_x = "✖".red();
 
         let mut lines = Vec::with_capacity(5);
-        let mut buf = String::with_capacity(36);
-        let _ = write!(buf, "{:28}{}", "Paper Size:", self.paper);
-        lines.push(buf);
+        let mut paper_buf = String::with_capacity(36);
+        let _ = write!(paper_buf, "{:28}{}", "Paper Size:", self.paper);
+        lines.push(paper_buf);
 
-        let mut buf = String::with_capacity(36);
-        let _ = write!(buf, "{:28}{}", "Format:", self.format);
-        lines.push(buf);
+        let mut format_buf = String::with_capacity(36);
+        let _ = write!(format_buf, "{:28}{}", "Format:", self.format);
+        lines.push(format_buf);
 
         // Cover Sheets
         if self.cover_sheets {
             if self.cover_sheets_by.is_empty() {
-                let mut buf = String::with_capacity(36);
-                let _ = write!(buf, "{:28}{green_check}", "Cover Sheets:");
-                lines.push(buf);
+                let mut cover_buf = String::with_capacity(36);
+                let _ = write!(cover_buf, "{:28}{green_check}", "Cover Sheets:");
+                lines.push(cover_buf);
             } else {
-                let mut buf = String::with_capacity(64);
-                let _ = write!(buf, "{:28}{green_check} - ", "Cover Sheets:");
+                let mut cover_buf = String::with_capacity(64);
+                let _ = write!(cover_buf, "{:28}{green_check} - ", "Cover Sheets:");
                 for (i, by) in self.cover_sheets_by.iter().enumerate() {
                     if i > 0 {
-                        buf.push_str(", ");
+                        cover_buf.push_str(", ");
                     }
-                    let _ = write!(buf, "{by}");
+                    let _ = write!(cover_buf, "{by}");
                 }
-                lines.push(buf);
+                lines.push(cover_buf);
             }
         } else {
-            let mut buf = String::with_capacity(36);
-            let _ = write!(buf, "{:28}{red_x}", "Cover Sheets:");
-            lines.push(buf);
+            let mut cover_buf = String::with_capacity(36);
+            let _ = write!(cover_buf, "{:28}{red_x}", "Cover Sheets:");
+            lines.push(cover_buf);
         }
 
         // Split PDFs
         if self.split.is_empty() {
-            let mut buf = String::with_capacity(36);
-            let _ = write!(buf, "{:28}{red_x}", "Split PDFs:");
-            lines.push(buf);
+            let mut split_buf = String::with_capacity(36);
+            let _ = write!(split_buf, "{:28}{red_x}", "Split PDFs:");
+            lines.push(split_buf);
         } else {
-            let mut buf = String::with_capacity(64);
-            let _ = write!(buf, "{:28}{green_check} - ", "Split PDFs:");
+            let mut split_buf = String::with_capacity(64);
+            let _ = write!(split_buf, "{:28}{green_check} - ", "Split PDFs:");
             for (i, split) in self.split.iter().enumerate() {
                 if i > 0 {
-                    buf.push_str(", ");
+                    split_buf.push_str(", ");
                 }
-                let _ = write!(buf, "{split}");
+                let _ = write!(split_buf, "{split}");
             }
-            lines.push(buf);
+            lines.push(split_buf);
         }
 
         // Active Options
@@ -275,23 +275,27 @@ impl ResolvedOptions {
             .filter_map(|&(name, active)| active.then_some(name));
 
         if let Some(first) = active.next() {
-            let mut buf = String::with_capacity(128);
-            let _ = write!(buf, "{:28}{green_check} - {first}", "Active Options:");
+            let mut options_buf = String::with_capacity(128);
+            let _ = write!(
+                options_buf,
+                "{:28}{green_check} - {first}",
+                "Active Options:"
+            );
             for opt in active {
-                buf.push_str(", ");
-                buf.push_str(opt);
+                options_buf.push_str(", ");
+                options_buf.push_str(opt);
             }
-            lines.push(buf);
+            lines.push(options_buf);
         } else {
-            let mut buf = String::with_capacity(36);
-            let _ = write!(buf, "{:28}{red_x}", "Active Options:");
-            lines.push(buf);
+            let mut options_buf = String::with_capacity(36);
+            let _ = write!(options_buf, "{:28}{red_x}", "Active Options:");
+            lines.push(options_buf);
         }
 
         if let Some(ref path) = self.font {
-            let mut buf = String::with_capacity(64);
-            let _ = write!(buf, "{:28}{}", "Font:", path.display());
-            lines.push(buf);
+            let mut font_buf = String::with_capacity(64);
+            let _ = write!(font_buf, "{:28}{}", "Font:", path.display());
+            lines.push(font_buf);
         }
 
         progress::draw_box("Configuration Summary", &lines)

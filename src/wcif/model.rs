@@ -20,17 +20,13 @@ impl WcaId {
     /// Parses a 10-character ASCII WCA ID (e.g. `"2022SMIT01"`). Returns `None` if invalid.
     pub fn parse(s: &str) -> Option<Self> {
         let arr: [u8; 10] = s.as_bytes().try_into().ok()?;
-        if arr.is_ascii() {
-            Some(Self(arr))
-        } else {
-            None
-        }
+        arr.is_ascii().then_some(Self(arr))
     }
 
     /// Returns the WCA ID as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
-        unsafe { str::from_utf8_unchecked(&self.0) }
+        str::from_utf8(&self.0).unwrap_or("")
     }
 }
 
@@ -162,11 +158,7 @@ impl CountryIso2 {
     /// Parses a 2-character ASCII country code (e.g. `"US"`). Returns `None` if invalid.
     pub fn parse(s: &str) -> Option<Self> {
         let arr: [u8; 2] = s.as_bytes().try_into().ok()?;
-        if arr.is_ascii() {
-            Some(Self(arr))
-        } else {
-            None
-        }
+        arr.is_ascii().then_some(Self(arr))
     }
 
     /// Returns the country code as a 2-byte ASCII array.
@@ -178,7 +170,7 @@ impl CountryIso2 {
     /// Returns the country code as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
-        unsafe { str::from_utf8_unchecked(&self.0) }
+        str::from_utf8(&self.0).unwrap_or("")
     }
 }
 
@@ -503,7 +495,6 @@ where
         Some(NumOrFloat::Int(n)) => Ok(Some(n)),
         Some(NumOrFloat::Float(f)) => {
             if f >= 0.0 && f.is_finite() {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 Ok(Some(f.round() as usize))
             } else {
                 Ok(None)
