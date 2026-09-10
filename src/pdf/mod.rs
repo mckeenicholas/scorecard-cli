@@ -1,7 +1,11 @@
+pub mod attempt;
 pub mod font;
 pub mod generator;
 pub mod layout;
 pub mod renderer;
+pub mod table;
+pub mod text;
+pub mod theme;
 
 pub use generator::{PdfGenerationError, PdfGenerator};
 pub use layout::{PageFormat, PageLayout, PaperSize};
