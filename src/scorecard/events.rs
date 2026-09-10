@@ -1,5 +1,8 @@
+use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
+
+use super::model::{GroupNumber, RoundNumber};
 
 /// Official World Cube Association (WCA) events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -33,7 +36,7 @@ impl fmt::Display for ParseEventError {
     }
 }
 
-impl std::error::Error for ParseEventError {}
+impl Error for ParseEventError {}
 
 impl WcaEvent {
     /// All 17 official WCA events in canonical order.
@@ -165,12 +168,83 @@ pub fn event_name_by_id(id: &str) -> Option<&'static str> {
     WcaEvent::from_id(id).map(WcaEvent::display_name)
 }
 
+/// Strongly typed representation of an official WCA event round (e.g. `"333-r1"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RoundId {
+    pub event: WcaEvent,
+    pub round_number: RoundNumber,
+}
+
+/// Error returned when parsing an invalid round ID string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseRoundIdError(pub String);
+
+impl fmt::Display for ParseRoundIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Invalid WCA round ID: '{}'", self.0)
+    }
+}
+
+impl Error for ParseRoundIdError {}
+
+impl RoundId {
+    /// Constructs a `RoundId` from an event and round number.
+    #[inline]
+    #[must_use]
+    pub const fn new(event: WcaEvent, round_number: RoundNumber) -> Self {
+        Self {
+            event,
+            round_number,
+        }
+    }
+
+    /// Parses a round ID string (e.g. `"333-r1"`, `"333-1"`).
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        let (event_str, round_str) = s.split_once('-')?;
+        let event = WcaEvent::from_id(event_str)?;
+        let round_number = round_str
+            .trim_start_matches('r')
+            .parse::<RoundNumber>()
+            .ok()?;
+        if round_number == 0 {
+            return None;
+        }
+        Some(Self {
+            event,
+            round_number,
+        })
+    }
+}
+
+impl fmt::Display for RoundId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-r{}", self.event.code(), self.round_number)
+    }
+}
+
+impl TryFrom<&str> for RoundId {
+    type Error = ParseRoundIdError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Self::parse(value).ok_or_else(|| ParseRoundIdError(value.to_string()))
+    }
+}
+
+impl FromStr for RoundId {
+    type Err = ParseRoundIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::try_from(s)
+    }
+}
+
 /// Strongly typed representation of an official WCA round or group activity code (e.g. `"333-r1"`, `"333-r2-g1"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ActivityCode {
     pub event: WcaEvent,
-    pub round_number: usize,
-    pub group_number: Option<usize>,
+    pub round_number: RoundNumber,
+    pub group_number: Option<GroupNumber>,
 }
 
 /// Error returned when parsing an invalid activity code string.
@@ -183,15 +257,15 @@ impl fmt::Display for ParseActivityCodeError {
     }
 }
 
-impl std::error::Error for ParseActivityCodeError {}
+impl Error for ParseActivityCodeError {}
 
 impl ActivityCode {
-    /// Creates an `ActivityCode` for an entire round (no specific group).
+    /// Creates an `ActivityCode` from a `RoundId`.
     #[must_use]
-    pub const fn round(event: WcaEvent, round_number: usize) -> Self {
+    pub const fn from_round(round: RoundId) -> Self {
         Self {
-            event,
-            round_number,
+            event: round.event,
+            round_number: round.round_number,
             group_number: None,
         }
     }
@@ -199,7 +273,11 @@ impl ActivityCode {
     /// Creates an `ActivityCode` for a specific round and group.
     #[cfg(test)]
     #[must_use]
-    pub const fn group(event: WcaEvent, round_number: usize, group_number: usize) -> Self {
+    pub const fn group(
+        event: WcaEvent,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
+    ) -> Self {
         Self {
             event,
             round_number,
@@ -221,7 +299,7 @@ impl ActivityCode {
 
         let event = WcaEvent::from_id(event_str)?;
         let round_num_str = round_str.strip_prefix('r')?;
-        let round_number = round_num_str.parse::<usize>().ok()?;
+        let round_number = round_num_str.parse::<RoundNumber>().ok()?;
         if round_number == 0 {
             return None;
         }
@@ -229,7 +307,7 @@ impl ActivityCode {
         let group_number = match group_str {
             Some(g) => {
                 let g_num_str = g.strip_prefix('g')?;
-                let g_num = g_num_str.parse::<usize>().ok()?;
+                let g_num = g_num_str.parse::<GroupNumber>().ok()?;
                 if g_num == 0 {
                     return None;
                 }
@@ -247,20 +325,14 @@ impl ActivityCode {
 
     /// Returns `true` if this activity code belongs to the specified event and round.
     #[must_use]
-    pub fn matches_round(&self, event: WcaEvent, round_number: usize) -> bool {
+    pub fn matches_round(&self, event: WcaEvent, round_number: RoundNumber) -> bool {
         self.event == event && self.round_number == round_number
     }
 
     /// Returns the group number, defaulting to 1 if not specified.
     #[must_use]
-    pub fn group_or_default(&self) -> usize {
+    pub fn group_or_default(&self) -> GroupNumber {
         self.group_number.unwrap_or(1)
-    }
-
-    /// Formats the round identifier (e.g. `"333-r1"`).
-    #[must_use]
-    pub fn round_id(&self) -> String {
-        format!("{}-r{}", self.event.code(), self.round_number)
     }
 }
 

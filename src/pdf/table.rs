@@ -1,9 +1,10 @@
-use crate::pdf::layout::RectSpec;
-use crate::pdf::text::{TextAlign, TextDrawer, TextSpec, grey};
-use crate::pdf::theme::ScorecardTheme;
 use printpdf::graphics::{Line, LinePoint, PaintMode, Point, Rect};
 use printpdf::ops::Op;
 use printpdf::units::Pt;
+
+use crate::pdf::layout::RectSpec;
+use crate::pdf::text::{self, TextAlign, TextDrawer, TextSpec};
+use crate::pdf::theme::ScorecardTheme;
 
 /// Column specification for grid tables (header label, width ratio [0.0..1.0], alignment, bold cell flag).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -73,7 +74,7 @@ impl TableDrawer {
         theme: &ScorecardTheme,
     ) {
         ops.push(Op::SetFillColor {
-            col: grey(theme.header_bg_grey),
+            col: text::grey(theme.header_bg_grey),
         });
         Self::draw_rect(
             ops,
@@ -161,7 +162,7 @@ impl TableDrawer {
 
     fn set_grid_stroke_style(ops: &mut Vec<Op>, theme: &ScorecardTheme) {
         ops.push(Op::SetOutlineColor {
-            col: grey(theme.grid_line_grey),
+            col: text::grey(theme.grid_line_grey),
         });
         ops.push(Op::SetOutlineThickness {
             pt: Pt(theme.grid_line_thickness),

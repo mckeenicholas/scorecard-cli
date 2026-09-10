@@ -1,11 +1,12 @@
-use crate::pdf::layout::RectSpec;
-use crate::pdf::renderer::ScorecardRenderer;
-use crate::pdf::text::TextDrawer;
-use crate::pdf::theme::DEFAULT_THEME;
-use crate::scorecard::{Competitor, ScorecardItem, TimeLimitInfo, WcaEvent, WcaId, WcaResult};
 use printpdf::FontId;
 use printpdf::font::BuiltinFont;
 use printpdf::ops::Op;
+
+use crate::pdf::layout::RectSpec;
+use crate::pdf::renderer::ScorecardRenderer;
+use crate::pdf::text::TextDrawer;
+use crate::pdf::theme;
+use crate::scorecard::{Competitor, ScorecardItem, TimeLimitInfo, WcaEvent, WcaId, WcaResult};
 
 #[test]
 fn test_estimate_width() {
@@ -123,7 +124,7 @@ fn test_draw_cover_sheet_operations() {
 
 #[test]
 fn test_theme_defaults() {
-    let theme = DEFAULT_THEME;
+    let theme = theme::DEFAULT_THEME;
     assert_eq!(theme.padding, 7.0);
     assert_eq!(theme.border_thickness, 0.75);
     assert!(theme.title_font_size > theme.header_font_size);
@@ -370,4 +371,72 @@ fn test_mixed_font_text_runs() {
 
     // 4. Close paren starts after "杨柯辰" (3 * 10.0 = 30.0 pt) PLUS paren_pad (1.0 pt)
     assert!((x_close - (x_cjk + 30.0 + 1.0)).abs() < 1e-4);
+}
+
+#[test]
+fn test_mixed_font_text_runs_local_names_first() {
+    let mut ops = Vec::new();
+    let custom_font = FontId("CustomFontTest".to_string());
+    TextDrawer::draw_competitor_name(
+        &mut ops,
+        "杨柯辰",
+        Some("Marco Yang"),
+        13.0,
+        100.0,
+        10.0,
+        Some(&custom_font),
+    );
+
+    let text_runs: Vec<String> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::ShowText { items } => items.first().and_then(|item| match item {
+                printpdf::ops::TextItem::Text(s) => Some(s.clone()),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(text_runs, vec!["杨柯辰", " (", "Marco Yang", ")"]);
+
+    let font_handles: Vec<printpdf::ops::PdfFontHandle> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::SetFont { font, .. } => Some(font.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        font_handles,
+        vec![
+            printpdf::ops::PdfFontHandle::External(FontId("CustomFontTest".to_string())),
+            printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+            printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+            printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
+        ]
+    );
+
+    let cursor_x_positions: Vec<f32> = ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::SetTextCursor { pos } => Some(pos.x.0),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(cursor_x_positions.len(), 4);
+    let x_cjk = cursor_x_positions[0];
+    let x_open = cursor_x_positions[1];
+    let x_latin = cursor_x_positions[2];
+    let x_close = cursor_x_positions[3];
+
+    assert!((x_cjk - 13.0).abs() < 1e-4);
+    // CJK width is 3 * 10.0 = 30.0 pt
+    assert!((x_open - (x_cjk + 30.0)).abs() < 1e-4);
+    let open_paren_w = TextDrawer::estimate_width(" (", 10.0, false);
+    assert!((x_latin - (x_open + open_paren_w)).abs() < 1e-4);
+    let latin_w = TextDrawer::estimate_width("Marco Yang", 10.0, false);
+    assert!((x_close - (x_latin + latin_w)).abs() < 1e-4);
 }

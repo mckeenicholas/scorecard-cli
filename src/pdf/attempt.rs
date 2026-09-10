@@ -1,7 +1,8 @@
+use std::fmt::Write as _;
+
 use crate::pdf::table::ColumnDef;
 use crate::pdf::text::TextAlign;
 use crate::scorecard::TimeLimitInfo;
-use std::fmt::Write;
 
 pub const ATTEMPT_COLUMNS: [ColumnDef<'static>; 5] = [
     ColumnDef::new("Attempt", 0.16, TextAlign::Center),

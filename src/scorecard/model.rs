@@ -1,15 +1,26 @@
-use super::events::WcaEvent;
-use crate::wcif::{Cutoff, Person, TimeLimit, WcaId};
 use std::borrow::Cow;
-use std::fmt::Write as _;
+use std::cmp::Ordering;
+use std::error::Error;
+use std::fmt::{self, Display, Formatter, Write as _};
 use std::num::NonZeroUsize;
+use std::ops::Deref;
+use std::slice::Iter;
+use std::vec::IntoIter;
+
+use super::events::WcaEvent;
+use super::planner;
+use crate::progress;
+use crate::wcif::{Cutoff, Person, TimeLimit, WcaId};
+
+pub type RoundNumber = u32;
+pub type GroupNumber = u32;
 
 /// Error returned when attempting to construct a [`WcaResult`] with an invalid value (< -2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidWcaResult(pub isize);
+pub struct InvalidWcaResult(pub i32);
 
-impl std::fmt::Display for InvalidWcaResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for InvalidWcaResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "invalid WCA result: {} centiseconds (values < -2 are not allowed)",
@@ -18,7 +29,7 @@ impl std::fmt::Display for InvalidWcaResult {
     }
 }
 
-impl std::error::Error for InvalidWcaResult {}
+impl Error for InvalidWcaResult {}
 
 /// Represents a WCA attempt result or time (in centiseconds >= -2).
 ///
@@ -30,16 +41,19 @@ impl std::error::Error for InvalidWcaResult {}
 ///
 /// Values `< -2` are disallowed and rejected by constructors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct WcaResult(isize);
+pub struct WcaResult(i32);
 
 impl WcaResult {
-    pub const DNF: Self = Self(-1);
-    pub const DNS: Self = Self(-2);
+    const DNF_RESULT: i32 = -1;
+    const DNS_RESULT: i32 = -2;
+
+    pub const DNF: Self = Self(Self::DNF_RESULT);
+    pub const DNS: Self = Self(Self::DNS_RESULT);
 
     /// Constructs a `WcaResult` if `centiseconds >= -2`.
     /// Returns `None` if `centiseconds < -2`.
     #[inline]
-    pub const fn new(centiseconds: isize) -> Option<Self> {
+    pub const fn new(centiseconds: i32) -> Option<Self> {
         if centiseconds < -2 {
             None
         } else {
@@ -50,7 +64,7 @@ impl WcaResult {
     /// Constructs a `WcaResult` if `centiseconds >= -2`.
     /// Returns `Err(InvalidWcaResult)` if `centiseconds < -2`.
     #[inline]
-    pub const fn try_new(centiseconds: isize) -> Result<Self, InvalidWcaResult> {
+    pub const fn try_new(centiseconds: i32) -> Result<Self, InvalidWcaResult> {
         if centiseconds < -2 {
             Err(InvalidWcaResult(centiseconds))
         } else {
@@ -59,7 +73,7 @@ impl WcaResult {
     }
 
     #[inline]
-    pub const fn centiseconds(self) -> isize {
+    pub const fn centiseconds(self) -> i32 {
         self.0
     }
 
@@ -70,33 +84,33 @@ impl WcaResult {
 
     #[inline]
     pub const fn is_dnf(self) -> bool {
-        self.0 == -1
+        self.0 == Self::DNF_RESULT
     }
 
     #[inline]
     pub const fn is_dns(self) -> bool {
-        self.0 == -2
+        self.0 == Self::DNS_RESULT
     }
 
     /// Constructs a `WcaResult` only for strictly positive times (centiseconds > 0).
     /// Returns `None` for sentinels (<= 0) or invalid values.
     #[inline]
-    pub const fn from_centiseconds(centis: isize) -> Option<Self> {
+    pub const fn from_centiseconds(centis: i32) -> Option<Self> {
         if centis > 0 { Some(Self(centis)) } else { None }
     }
 }
 
-impl TryFrom<isize> for WcaResult {
+impl TryFrom<i32> for WcaResult {
     type Error = InvalidWcaResult;
 
     #[inline]
-    fn try_from(centis: isize) -> Result<Self, Self::Error> {
+    fn try_from(centis: i32) -> Result<Self, Self::Error> {
         Self::try_new(centis)
     }
 }
 
-impl std::ops::Deref for WcaResult {
-    type Target = isize;
+impl Deref for WcaResult {
+    type Target = i32;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -104,36 +118,36 @@ impl std::ops::Deref for WcaResult {
     }
 }
 
-impl PartialEq<isize> for WcaResult {
+impl PartialEq<i32> for WcaResult {
     #[inline]
-    fn eq(&self, other: &isize) -> bool {
+    fn eq(&self, other: &i32) -> bool {
         self.0 == *other
     }
 }
 
-impl PartialEq<WcaResult> for isize {
+impl PartialEq<WcaResult> for i32 {
     #[inline]
     fn eq(&self, other: &WcaResult) -> bool {
         *self == other.0
     }
 }
 
-impl PartialOrd<isize> for WcaResult {
+impl PartialOrd<i32> for WcaResult {
     #[inline]
-    fn partial_cmp(&self, other: &isize) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &i32) -> Option<Ordering> {
         self.0.partial_cmp(other)
     }
 }
 
-impl PartialOrd<WcaResult> for isize {
+impl PartialOrd<WcaResult> for i32 {
     #[inline]
-    fn partial_cmp(&self, other: &WcaResult) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &WcaResult) -> Option<Ordering> {
         self.partial_cmp(&other.0)
     }
 }
 
-impl std::fmt::Display for WcaResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for WcaResult {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.0 <= 0 {
             return match self.0 {
                 -1 => write!(f, "DNF"),
@@ -189,7 +203,7 @@ impl TimeLimitInfo {
 
     /// Formats centiseconds into a human-readable time string (e.g. "1:30.50").
     /// Returns `None` for values <= 0 (covers WCA sentinels: -1 = DNF, -2 = DNS).
-    pub fn format_centiseconds(centis: isize) -> Option<String> {
+    pub fn format_centiseconds(centis: i32) -> Option<String> {
         if centis <= 0 {
             None
         } else {
@@ -255,9 +269,9 @@ impl<'a> Competitor<'a> {
     }
 
     /// Constructs a `Competitor` from a WCIF `Person`.
-    pub fn from_person(person: &'a Person, print_one_name: bool) -> Self {
+    pub fn from_person(person: &'a Person, print_one_name: bool, local_names_first: bool) -> Self {
         let (name, local_name) =
-            crate::scorecard::planner::format_competitor_name(&person.name, print_one_name);
+            planner::format_competitor_name(&person.name, print_one_name, local_names_first);
         Self {
             name,
             local_name,
@@ -296,8 +310,8 @@ pub struct Scorecard<'a> {
     pub station_number: Option<usize>,
     pub competition_name: &'a str,
     pub event: WcaEvent,
-    pub round_number: usize,
-    pub group_number: usize,
+    pub round_number: RoundNumber,
+    pub group_number: GroupNumber,
     pub stage_name: Option<&'a str>,
     pub competitor: Competitor<'a>,
     pub attempt_count: usize,
@@ -331,8 +345,8 @@ pub struct BlankScorecard<'a> {
     pub station_number: Option<usize>,
     pub competition_name: &'a str,
     pub event: WcaEvent,
-    pub round_number: usize,
-    pub group_number: usize,
+    pub round_number: RoundNumber,
+    pub group_number: GroupNumber,
     pub stage_name: Option<&'a str>,
     pub attempt_count: usize,
     pub time_limit_info: Option<TimeLimitInfo>,
@@ -363,8 +377,8 @@ impl BlankScorecard<'_> {
 pub struct CoverSheet<'a> {
     pub competition_name: &'a str,
     pub event: WcaEvent,
-    pub round_number: usize,
-    pub group_number: usize,
+    pub round_number: RoundNumber,
+    pub group_number: GroupNumber,
     pub stage_name: Option<&'a str>,
     pub total_group_cards: usize,
 }
@@ -434,8 +448,8 @@ impl<'a> ScorecardItem<'a> {
     pub fn scorecard(
         competition_name: &'a str,
         event: WcaEvent,
-        round_number: usize,
-        group_number: usize,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
         stage_name: Option<&'a str>,
         competitor: Competitor<'a>,
         station_number: Option<usize>,
@@ -460,8 +474,8 @@ impl<'a> ScorecardItem<'a> {
     pub fn cover_sheet(
         competition_name: &'a str,
         event: WcaEvent,
-        round_number: usize,
-        group_number: usize,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
         stage_name: Option<&'a str>,
         total_group_cards: usize,
     ) -> Self {
@@ -479,8 +493,8 @@ impl<'a> ScorecardItem<'a> {
     pub fn blank(
         competition_name: &'a str,
         event: WcaEvent,
-        round_number: usize,
-        group_number: usize,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
         stage_name: Option<&'a str>,
         attempt_count: usize,
         time_limit_info: Option<TimeLimitInfo>,
@@ -510,13 +524,13 @@ impl<'a> ScorecardItem<'a> {
 pub enum PlannedRoundSummary {
     OpenRound {
         event: WcaEvent,
-        round_number: usize,
+        round_number: RoundNumber,
         competitor_count: usize,
         sample_competitor_names: Vec<String>,
     },
     SubsequentRound {
         event: WcaEvent,
-        round_number: usize,
+        round_number: RoundNumber,
         blank_count: usize,
         reason: String,
     },
@@ -661,17 +675,17 @@ impl ScorecardPlan<'_> {
             }
         }
 
-        crate::progress::draw_box("Scorecards Generated", &lines)
+        progress::draw_box("Scorecards Generated", &lines)
     }
 }
 
-impl std::fmt::Display for ScorecardPlan<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ScorecardPlan<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.format_summary())
     }
 }
 
-impl<'a> std::ops::Deref for ScorecardPlan<'a> {
+impl<'a> Deref for ScorecardPlan<'a> {
     type Target = [ScorecardItem<'a>];
 
     fn deref(&self) -> &Self::Target {
@@ -681,7 +695,7 @@ impl<'a> std::ops::Deref for ScorecardPlan<'a> {
 
 impl<'a> IntoIterator for ScorecardPlan<'a> {
     type Item = ScorecardItem<'a>;
-    type IntoIter = std::vec::IntoIter<ScorecardItem<'a>>;
+    type IntoIter = IntoIter<ScorecardItem<'a>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.items.into_iter()
@@ -690,7 +704,7 @@ impl<'a> IntoIterator for ScorecardPlan<'a> {
 
 impl<'a, 'b> IntoIterator for &'b ScorecardPlan<'a> {
     type Item = &'b ScorecardItem<'a>;
-    type IntoIter = std::slice::Iter<'b, ScorecardItem<'a>>;
+    type IntoIter = Iter<'b, ScorecardItem<'a>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.items.iter()

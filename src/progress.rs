@@ -1,7 +1,8 @@
-use indicatif::{ProgressBar, ProgressStyle};
 use std::borrow::Cow;
-use std::fmt::Write;
+use std::fmt::Write as _;
 use std::time::Duration;
+
+use indicatif::{ProgressBar, ProgressStyle};
 
 /// Tick interval for loading spinners (80ms creates a smooth ~12.5 FPS animation).
 pub const SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(80);

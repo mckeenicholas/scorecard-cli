@@ -1,15 +1,14 @@
+use std::num::NonZeroUsize;
+
 use crate::options::CoverSheetBy;
-use crate::scorecard::events::WcaEvent;
+use crate::scorecard::events::{RoundId, WcaEvent};
 use crate::scorecard::model::{Competitor, ScorecardItem, WcaResult};
 use crate::scorecard::planner::{self, ScorecardPlanner};
-use crate::wcif::{
-    Competition, Cutoff, Event, Round, TimeLimit, WcaId,
-    model::{
-        Activity, AdvancementCondition, Assignment, CountryIso2, Person, Registration, Room,
-        Schedule, Venue,
-    },
+use crate::wcif::model::{
+    Activity, AdvancementCondition, Assignment, CountryIso2, Person, Registration, Room, Schedule,
+    Venue,
 };
-use std::num::NonZeroUsize;
+use crate::wcif::{Competition, Cutoff, Event, Round, TimeLimit, WcaId};
 
 #[test]
 fn test_sort_group_cards_station_and_name() {
@@ -121,12 +120,12 @@ fn test_resolve_targets_omits_333fm() {
 
     let (targets_all, _) = ScorecardPlanner::resolve_all_targets(&comp);
     assert_eq!(targets_all.len(), 1);
-    assert_eq!(targets_all[0].event, WcaEvent::E333);
+    assert_eq!(targets_all[0].round_id.event, WcaEvent::E333);
 
     let (targets_explicit, notes_explicit) =
         ScorecardPlanner::resolve_targets(&comp, &["333", "333fm"]);
     assert_eq!(targets_explicit.len(), 1);
-    assert_eq!(targets_explicit[0].event, WcaEvent::E333);
+    assert_eq!(targets_explicit[0].round_id.event, WcaEvent::E333);
     assert_eq!(notes_explicit.len(), 1);
     assert!(notes_explicit[0].contains("333fm"));
 }
@@ -289,12 +288,13 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
     // (222-r2 is omitted because it has no competitor assignments)
     let (targets_all, _) = ScorecardPlanner::resolve_all_targets(&comp);
     assert_eq!(targets_all.len(), 3);
-    assert_eq!(targets_all[0].round_id, "333-r1");
-    assert_eq!(targets_all[1].round_id, "333-r2");
-    assert_eq!(targets_all[2].round_id, "222-r1");
+    assert_eq!(targets_all[0].round_id, RoundId::new(WcaEvent::E333, 1));
+    assert_eq!(targets_all[1].round_id, RoundId::new(WcaEvent::E333, 2));
+    assert_eq!(targets_all[2].round_id, RoundId::new(WcaEvent::E222, 1));
 
     // 2. Planning 333-r2 produces a NAMED scorecard for Alice (and NOT Bob):
-    let plan_r2 = ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false).unwrap();
+    let plan_r2 =
+        ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false, false).unwrap();
     assert_eq!(plan_r2.len(), 1);
     let alice_r2 = &plan_r2[0];
     if let ScorecardItem::Scorecard(alice) = alice_r2 {
@@ -306,7 +306,8 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
     }
 
     // 3. Planning 222-r2 explicitly (no assignments) produces blank scorecards:
-    let plan_222_r2 = ScorecardPlanner::plan(&comp, &["222-r2"], false, &[], true, false).unwrap();
+    let plan_222_r2 =
+        ScorecardPlanner::plan(&comp, &["222-r2"], false, &[], true, false, false).unwrap();
     assert!(!plan_222_r2.is_empty());
     assert!(plan_222_r2[0].is_blank());
 }
@@ -419,7 +420,8 @@ fn test_scorecard_planner_full_pipeline() {
     };
 
     // Plan Round 1
-    let cards_r1 = ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], true, false).unwrap();
+    let cards_r1 =
+        ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], true, false, false).unwrap();
     assert_eq!(cards_r1.len(), 1);
     let card1 = &cards_r1[0];
     if let ScorecardItem::Scorecard(sc) = card1 {
@@ -447,7 +449,8 @@ fn test_scorecard_planner_full_pipeline() {
     assert!(!card1.is_cover_sheet());
 
     // Plan Round 2 (advancement blanks)
-    let cards_r2 = ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false).unwrap();
+    let cards_r2 =
+        ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false, false).unwrap();
     assert_eq!(cards_r2.len(), 1);
     let blank_card = &cards_r2[0];
     if let ScorecardItem::Blank(blank) = blank_card {
@@ -562,6 +565,7 @@ fn test_planner_with_cover_sheets() {
         ],
         true,
         false,
+        false,
     )
     .unwrap();
     // 3 cover sheets (Round, Group, Stage) + 2 competitor cards = 5 items
@@ -627,6 +631,7 @@ fn test_planner_with_cover_sheets() {
         &[CoverSheetBy::Stage],
         true,
         false,
+        false,
     )
     .unwrap();
     assert_eq!(plan_stage.len(), 3);
@@ -646,6 +651,7 @@ fn test_planner_with_cover_sheets() {
         &[CoverSheetBy::Group],
         true,
         false,
+        false,
     )
     .unwrap();
     assert_eq!(plan_g.len(), 3);
@@ -664,6 +670,7 @@ fn test_planner_with_cover_sheets() {
         true,
         &[CoverSheetBy::Round],
         true,
+        false,
         false,
     )
     .unwrap();
@@ -814,6 +821,7 @@ fn test_planner_additive_multi_stage_multi_group() {
         ],
         true,
         false,
+        false,
     )
     .unwrap();
 
@@ -902,6 +910,66 @@ fn test_planner_additive_multi_stage_multi_group() {
     if let ScorecardItem::Scorecard(sc) = &plan[8] {
         assert_eq!(sc.competitor.name, "Charlie Brown");
         assert_eq!(sc.number, 3);
+    } else {
+        panic!("Expected Scorecard");
+    }
+}
+
+#[test]
+fn test_planner_local_names_first() {
+    let comp = Competition {
+        format_version: Some("1.0".to_string()),
+        id: "LocalNameComp2026".to_string(),
+        name: "Local Name Comp 2026".to_string(),
+        short_name: Some("Local Name 2026".to_string()),
+        persons: vec![Person {
+            registrant_id: NonZeroUsize::new(1),
+            name: "Zhang San (张三)".to_string(),
+            wca_id: None,
+            country_iso2: CountryIso2::parse("CN"),
+            registration: Some(Registration {
+                id: NonZeroUsize::new(1),
+                status: Some("accepted".to_string()),
+                event_ids: vec!["333".to_string()],
+                is_competing: true,
+            }),
+            assignments: vec![],
+        }],
+        events: vec![Event {
+            id: "333".to_string(),
+            rounds: vec![Round {
+                id: "333-r1".to_string(),
+                format: Some("a".to_string()),
+                time_limit: None,
+                cutoff: None,
+                advancement_condition: None,
+                scramble_group_count: 1,
+            }],
+            competitor_limit: None,
+            qualification: None,
+        }],
+        schedule: None,
+        extensions: vec![],
+    };
+
+    // With local_names_first = false: primary is "Zhang San", local is Some("张三")
+    let plan_standard =
+        ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], false, false, false).unwrap();
+    assert_eq!(plan_standard.len(), 1);
+    if let ScorecardItem::Scorecard(sc) = &plan_standard[0] {
+        assert_eq!(sc.competitor.name, "Zhang San");
+        assert_eq!(sc.competitor.local_name, Some("张三"));
+    } else {
+        panic!("Expected Scorecard");
+    }
+
+    // With local_names_first = true: primary is "张三", local is Some("Zhang San")
+    let plan_local_first =
+        ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], false, false, true).unwrap();
+    assert_eq!(plan_local_first.len(), 1);
+    if let ScorecardItem::Scorecard(sc) = &plan_local_first[0] {
+        assert_eq!(sc.competitor.name, "张三");
+        assert_eq!(sc.competitor.local_name, Some("Zhang San"));
     } else {
         panic!("Expected Scorecard");
     }

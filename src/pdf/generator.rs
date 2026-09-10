@@ -1,34 +1,38 @@
-use super::font::FontResolver;
-use super::layout::{PageFormat, PageLayout};
-use super::renderer::ScorecardRenderer;
-use crate::scorecard::ScorecardItem;
-use crate::wcif::Competition;
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+use std::io::{Error as IoError, Write};
+use std::path::PathBuf;
+
 use printpdf::ops::PdfPage;
 use printpdf::serialize::PdfSaveOptions;
 use printpdf::units::Mm;
 use printpdf::{FontId, PdfDocument};
 use rayon::prelude::*;
-use std::io::Write;
-use std::path::PathBuf;
+
+use super::font::FontResolver;
+use super::layout::{PageFormat, PageLayout};
+use super::renderer::ScorecardRenderer;
+use crate::scorecard::{GroupNumber, RoundNumber, ScorecardItem, WcaEvent};
+use crate::wcif::Competition;
 
 /// Error encountered during PDF generation or file serialization.
 #[derive(Debug)]
 pub enum PdfGenerationError {
     Lopdf(lopdf::Error),
-    Io(std::io::Error),
+    Io(IoError),
 }
 
-impl std::fmt::Display for PdfGenerationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for PdfGenerationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            PdfGenerationError::Lopdf(e) => write!(f, "PDF serialization error: {e}"),
-            PdfGenerationError::Io(e) => write!(f, "PDF I/O error: {e}"),
+            PdfGenerationError::Lopdf(e) => write!(f, "PDF serialization error::Error: {e}"),
+            PdfGenerationError::Io(e) => write!(f, "PDF I/O error::Error: {e}"),
         }
     }
 }
 
-impl std::error::Error for PdfGenerationError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for PdfGenerationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             PdfGenerationError::Lopdf(e) => Some(e),
             PdfGenerationError::Io(e) => Some(e),
@@ -42,8 +46,8 @@ impl From<lopdf::Error> for PdfGenerationError {
     }
 }
 
-impl From<std::io::Error> for PdfGenerationError {
-    fn from(err: std::io::Error) -> Self {
+impl From<IoError> for PdfGenerationError {
+    fn from(err: IoError) -> Self {
         PdfGenerationError::Io(err)
     }
 }
@@ -189,8 +193,7 @@ impl PdfGenerator {
         }
 
         let mut result = Vec::with_capacity(cards.len() + 16);
-        let mut current_group: Option<(crate::scorecard::WcaEvent, usize, usize, Option<&'a str>)> =
-            None;
+        let mut current_group: Option<(WcaEvent, RoundNumber, GroupNumber, Option<&'a str>)> = None;
         let mut cards_on_page = 0;
 
         for &card in cards {
@@ -411,10 +414,11 @@ mod tests {
 
     #[test]
     fn test_brampton_summer_pages() {
+        use std::path::Path;
+
         use crate::options::CoverSheetBy;
         use crate::scorecard::ScorecardPlanner;
         use crate::wcif::loader::WcifLoader;
-        use std::path::Path;
 
         let comp = match WcifLoader::load_from_file(Path::new("BramptonSummer.json")) {
             Ok(c) => c,
@@ -428,6 +432,7 @@ mod tests {
             true,
             &[CoverSheetBy::Stage],
             true,
+            false,
             false,
         )
         .unwrap();

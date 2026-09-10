@@ -1,3 +1,7 @@
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+use std::str::FromStr;
+
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -21,8 +25,8 @@ pub enum SplitBy {
     Stage,
 }
 
-impl std::fmt::Display for SplitBy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for SplitBy {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             SplitBy::Event => write!(f, "event"),
             SplitBy::Group => write!(f, "group"),
@@ -35,8 +39,8 @@ impl std::fmt::Display for SplitBy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseSplitByError(pub String);
 
-impl std::fmt::Display for ParseSplitByError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ParseSplitByError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "invalid split criterion '{}': must be 'event', 'group', or 'stage'",
@@ -45,9 +49,9 @@ impl std::fmt::Display for ParseSplitByError {
     }
 }
 
-impl std::error::Error for ParseSplitByError {}
+impl Error for ParseSplitByError {}
 
-impl std::str::FromStr for SplitBy {
+impl FromStr for SplitBy {
     type Err = ParseSplitByError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -96,8 +100,8 @@ impl CoverSheetBy {
     }
 }
 
-impl std::fmt::Display for CoverSheetBy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for CoverSheetBy {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             CoverSheetBy::Round => write!(f, "round"),
             CoverSheetBy::Group => write!(f, "group"),
@@ -111,8 +115,8 @@ impl std::fmt::Display for CoverSheetBy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseCoverSheetByError(pub String);
 
-impl std::fmt::Display for ParseCoverSheetByError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ParseCoverSheetByError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "invalid cover sheet criterion '{}': must be 'round' ('r'), 'group' ('g'), or 'stage' ('s')",
@@ -121,9 +125,9 @@ impl std::fmt::Display for ParseCoverSheetByError {
     }
 }
 
-impl std::error::Error for ParseCoverSheetByError {}
+impl Error for ParseCoverSheetByError {}
 
-impl std::str::FromStr for CoverSheetBy {
+impl FromStr for CoverSheetBy {
     type Err = ParseCoverSheetByError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -141,8 +145,8 @@ pub enum OptionsCompatibilityError {
     },
 }
 
-impl std::fmt::Display for OptionsCompatibilityError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for OptionsCompatibilityError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             OptionsCompatibilityError::IncompatibleSplit { split, cover_sheet } => {
                 match (cover_sheet, split) {
@@ -168,4 +172,4 @@ impl std::fmt::Display for OptionsCompatibilityError {
     }
 }
 
-impl std::error::Error for OptionsCompatibilityError {}
+impl Error for OptionsCompatibilityError {}

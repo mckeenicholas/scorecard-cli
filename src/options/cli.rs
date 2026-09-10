@@ -1,7 +1,9 @@
+use std::path::PathBuf;
+
+use clap::Parser;
+
 use super::types::{CoverSheetBy, SplitBy};
 use crate::pdf::{PageFormat, PaperSize};
-use clap::Parser;
-use std::path::PathBuf;
 
 /// Fast WCA Cubing Competition Scorecard Generator in Rust
 #[derive(Parser, Debug, Clone, Default)]

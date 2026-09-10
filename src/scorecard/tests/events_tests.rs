@@ -1,4 +1,4 @@
-use crate::scorecard::events::{self, ActivityCode, WcaEvent};
+use crate::scorecard::events::{self, ActivityCode, RoundId, WcaEvent};
 
 #[test]
 fn test_event_name_by_id() {
@@ -26,6 +26,28 @@ fn test_wca_event_properties() {
 }
 
 #[test]
+fn test_round_id_parsing_and_formatting() {
+    let r1 = RoundId::new(WcaEvent::E333, 1);
+    assert_eq!(r1.event, WcaEvent::E333);
+    assert_eq!(r1.round_number, 1);
+    assert_eq!(r1.to_string(), "333-r1");
+    assert_eq!(RoundId::parse("333-r1"), Some(r1));
+    assert_eq!(RoundId::parse("333-1"), Some(r1));
+    assert_eq!("333-r1".parse::<RoundId>().unwrap(), r1);
+    assert_eq!("333-1".parse::<RoundId>().unwrap(), r1);
+
+    let r2 = RoundId::new(WcaEvent::Minx, 3);
+    assert_eq!(r2.to_string(), "minx-r3");
+    assert_eq!(RoundId::parse("minx-r3"), Some(r2));
+    assert_eq!(RoundId::parse("minx-3"), Some(r2));
+
+    assert_eq!(RoundId::parse("333"), None);
+    assert_eq!(RoundId::parse("333-r0"), None);
+    assert_eq!(RoundId::parse("invalid-r1"), None);
+    assert!("invalid".parse::<RoundId>().is_err());
+}
+
+#[test]
 fn test_activity_code_parsing_and_formatting() {
     // Round only
     let ac_round = ActivityCode::parse("333-r1").unwrap();
@@ -34,7 +56,6 @@ fn test_activity_code_parsing_and_formatting() {
     assert_eq!(ac_round.group_number, None);
     assert_eq!(ac_round.group_or_default(), 1);
     assert_eq!(ac_round.to_string(), "333-r1");
-    assert_eq!(ac_round.round_id(), "333-r1");
     assert!(ac_round.matches_round(WcaEvent::E333, 1));
     assert!(!ac_round.matches_round(WcaEvent::E333, 2));
     assert!(!ac_round.matches_round(WcaEvent::E222, 1));
@@ -46,11 +67,13 @@ fn test_activity_code_parsing_and_formatting() {
     assert_eq!(ac_group.group_number, Some(3));
     assert_eq!(ac_group.group_or_default(), 3);
     assert_eq!(ac_group.to_string(), "minx-r2-g3");
-    assert_eq!(ac_group.round_id(), "minx-r2");
 
-    // Round constructors
-    let round_ctor = ActivityCode::round(WcaEvent::Clock, 3);
+    // Round constructor
+    let round_ctor = ActivityCode::from_round(RoundId::new(WcaEvent::Clock, 3));
     assert_eq!(round_ctor.to_string(), "clock-r3");
+    assert_eq!(round_ctor.event, WcaEvent::Clock);
+    assert_eq!(round_ctor.round_number, 3);
+    assert_eq!(round_ctor.group_number, None);
     let group_ctor = ActivityCode::group(WcaEvent::Sq1, 1, 2);
     assert_eq!(group_ctor.to_string(), "sq1-r1-g2");
 

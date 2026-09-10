@@ -1,11 +1,12 @@
+use std::num::NonZeroUsize;
+
 use crate::scorecard::events::WcaEvent;
 use crate::scorecard::model::{
     Competitor, InvalidWcaResult, PlannedRoundSummary, ScorecardItem, ScorecardPlan, TimeLimitInfo,
     WcaResult,
 };
-use crate::scorecard::planner::format_competitor_name;
+use crate::scorecard::planner;
 use crate::wcif::{Cutoff, TimeLimit, WcaId};
-use std::num::NonZeroUsize;
 
 #[test]
 fn test_scorecard_item_display_methods() {
@@ -109,11 +110,11 @@ fn test_wca_result_display_and_helpers() {
 
     let res = WcaResult::new(4500).unwrap();
     assert_eq!(res.centiseconds(), 4500);
-    assert!(*res == 4500); // Deref<Target = isize>
-    assert_eq!(res, 4500); // PartialEq<isize>
-    assert_eq!(4500, res); // PartialEq<WcaResult> for isize
-    assert!(res < 5000); // PartialOrd<isize>
-    assert!(5000 > res); // PartialOrd<WcaResult> for isize
+    assert!(*res == 4500); // Deref<Target = i32>
+    assert_eq!(res, 4500); // PartialEq<i32>
+    assert_eq!(4500, res); // PartialEq<WcaResult> for i32
+    assert!(res < 5000); // PartialOrd<i32>
+    assert!(5000 > res); // PartialOrd<WcaResult> for i32
     assert!(res.is_valid_time());
     assert!(!res.is_dnf());
     assert!(!res.is_dns());
@@ -166,35 +167,63 @@ fn test_scorecard_plan_summary_formatting() {
 
 #[test]
 fn test_format_competitor_name_and_print_one_name() {
-    // When print_one_name is false: preserves original full name
+    // When print_one_name is false and local_names_first is false: preserves original full name
     assert_eq!(
-        format_competitor_name("Zhang San (张三)", false),
+        planner::format_competitor_name("Zhang San (张三)", false, false),
         ("Zhang San", Some("张三"))
     );
     assert_eq!(
-        format_competitor_name("Lucas Burliga (Łukasz Burliga)", false),
+        planner::format_competitor_name("Lucas Burliga (Łukasz Burliga)", false, false),
         ("Lucas Burliga", Some("Łukasz Burliga"))
     );
     assert_eq!(
-        format_competitor_name("Alice Smith", false),
+        planner::format_competitor_name("Alice Smith", false, false),
         ("Alice Smith", None)
     );
 
-    // When print_one_name is true: strips parenthesized local or Latin name
+    // When print_one_name is true and local_names_first is false: strips parenthesized local or Latin name
     assert_eq!(
-        format_competitor_name("Zhang San (张三)", true),
+        planner::format_competitor_name("Zhang San (张三)", true, false),
         ("Zhang San", None)
     );
     assert_eq!(
-        format_competitor_name("Lucas Burliga (Łukasz Burliga)", true),
+        planner::format_competitor_name("Lucas Burliga (Łukasz Burliga)", true, false),
         ("Lucas Burliga", None)
     );
     assert_eq!(
-        format_competitor_name("Alice Smith", true),
+        planner::format_competitor_name("Alice Smith", true, false),
         ("Alice Smith", None)
     );
     assert_eq!(
-        format_competitor_name("Kim Min-jun (김민준)", true),
+        planner::format_competitor_name("Kim Min-jun (김민준)", true, false),
         ("Kim Min-jun", None)
+    );
+
+    // When local_names_first is true: swaps primary name and parenthesized local name
+    assert_eq!(
+        planner::format_competitor_name("Zhang San (张三)", false, true),
+        ("张三", Some("Zhang San"))
+    );
+    assert_eq!(
+        planner::format_competitor_name("Lucas Burliga (Łukasz Burliga)", false, true),
+        ("Łukasz Burliga", Some("Lucas Burliga"))
+    );
+    assert_eq!(
+        planner::format_competitor_name("Alice Smith", false, true),
+        ("Alice Smith", None)
+    );
+
+    // When print_one_name is true, the local name is omitted regardless of local_names_first
+    assert_eq!(
+        planner::format_competitor_name("Zhang San (张三)", true, true),
+        ("Zhang San", None)
+    );
+    assert_eq!(
+        planner::format_competitor_name("Lucas Burliga (Łukasz Burliga)", true, true),
+        ("Lucas Burliga", None)
+    );
+    assert_eq!(
+        planner::format_competitor_name("Alice Smith", true, true),
+        ("Alice Smith", None)
     );
 }

@@ -12,10 +12,11 @@ pub use layout::{PageFormat, PageLayout, PaperSize};
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use super::*;
     use crate::scorecard::{Competitor, ScorecardItem, TimeLimitInfo, WcaEvent, WcaResult};
     use crate::wcif::{Competition, WcaId};
-    use std::num::NonZeroUsize;
 
     #[test]
     fn test_pdf_generator_formats() {

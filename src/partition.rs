@@ -1,31 +1,33 @@
-use crate::options::{self, ResolvedOptions, SplitBy};
-use crate::pdf::{PageLayout, PdfGenerator};
-use crate::progress;
-use crate::scorecard::{ScorecardItem, WcaEvent};
-use crate::wcif;
-use crossterm::style::Stylize;
 use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use std::collections::{BTreeMap, HashMap};
+use std::error::Error;
+use std::fmt::{self, Display, Formatter, Write as _};
 use std::fs::File;
 use std::io::BufWriter;
+
+use crossterm::style::Stylize as _;
+
+use crate::options::{self, ResolvedOptions, SplitBy};
+use crate::pdf::{PageLayout, PdfGenerator};
+use crate::scorecard::{GroupNumber, RoundId, RoundNumber, ScorecardItem, WcaEvent};
+use crate::{progress, wcif};
 
 const BUFFER_SIZE: usize = 16 * 1024 * 1024; // 16 MB
 
 pub fn slugify(s: &str) -> String {
+    let mut parts = s
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .peekable();
+
     let mut slug = String::with_capacity(s.len());
-    for c in s.chars().flat_map(char::to_lowercase) {
-        if c.is_alphanumeric() {
+    while let Some(part) = parts.next() {
+        for c in part.chars().flat_map(char::to_lowercase) {
             slug.push(c);
-        } else if (c.is_whitespace() || c == '-' || c == '_')
-            && !slug.ends_with('-')
-            && !slug.is_empty()
-        {
+        }
+        if parts.peek().is_some() {
             slug.push('-');
         }
-    }
-    while slug.ends_with('-') {
-        slug.pop();
     }
     slug
 }
@@ -33,8 +35,8 @@ pub fn slugify(s: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SplitKey {
     pub stage: Option<String>,
-    pub event: Option<(WcaEvent, usize)>,
-    pub group: Option<usize>,
+    pub event: Option<RoundId>,
+    pub group: Option<GroupNumber>,
 }
 
 impl SplitKey {
@@ -45,9 +47,8 @@ impl SplitKey {
             name.push('-');
             name.push_str(stage);
         }
-        if let Some((event, round_number)) = self.event {
-            let event_id = event.code();
-            let _ = write!(name, "-{event_id}-r{round_number}");
+        if let Some(round_id) = self.event {
+            let _ = write!(name, "-{round_id}");
         }
         if let Some(group) = self.group {
             let _ = write!(name, "-group{group}");
@@ -87,11 +88,11 @@ pub fn build_split_key(
             None
         },
         event: if has_event && let Some(ev) = event {
-            Some((ev, round_number))
+            Some(RoundId::new(ev, round_number))
         } else {
             None
         },
-        group: if has_group { Some(group_number) } else { None },
+        group: has_group.then_some(group_number),
     }
 }
 
@@ -160,8 +161,8 @@ pub fn write_pdf_file(
 struct BundleKey<'a> {
     stage_name: Option<&'a str>,
     event: WcaEvent,
-    round_number: usize,
-    group_number: usize,
+    round_number: RoundNumber,
+    group_number: GroupNumber,
 }
 
 /// Error returned when scorecard file splitting configuration is incompatible with cover sheets.
@@ -170,15 +171,15 @@ pub enum SplitError {
     IncompatibleOptions(options::OptionsCompatibilityError),
     SplitBundle {
         event_id: String,
-        round_number: usize,
-        group_number: usize,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
         first_file: String,
         second_file: String,
     },
 }
 
-impl std::fmt::Display for SplitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for SplitError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             SplitError::IncompatibleOptions(e) => write!(f, "{e}"),
             SplitError::SplitBundle {
@@ -197,8 +198,8 @@ impl std::fmt::Display for SplitError {
     }
 }
 
-impl std::error::Error for SplitError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for SplitError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             SplitError::IncompatibleOptions(e) => Some(e),
             SplitError::SplitBundle { .. } => None,
@@ -215,8 +216,7 @@ impl From<options::OptionsCompatibilityError> for SplitError {
 pub fn validate_card_bundle_placement(
     partitions: &[(String, Cow<'_, [ScorecardItem<'_>]>)],
 ) -> Result<(), SplitError> {
-    let mut bundle_partition_map: std::collections::HashMap<BundleKey<'_>, &str> =
-        std::collections::HashMap::new();
+    let mut bundle_partition_map: HashMap<BundleKey<'_>, &str> = HashMap::new();
 
     for (filename, partition_cards) in partitions {
         for card in partition_cards.as_ref() {
@@ -350,9 +350,10 @@ pub fn generate_partitioned_pdfs(
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use super::*;
     use crate::scorecard::Competitor;
-    use std::num::NonZeroUsize;
 
     const ID1: NonZeroUsize = NonZeroUsize::MIN;
     const ID2: NonZeroUsize = match NonZeroUsize::new(2) {

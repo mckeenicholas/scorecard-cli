@@ -1,25 +1,26 @@
-use super::suggest::{fetch_wca_competitions, get_local_json_suggestions};
-use super::types::{InteractiveError, RawModeGuard, Suggestion};
-use crossterm::{
-    cursor,
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    queue,
-    style::{self, Stylize},
-    terminal::{self, ClearType},
-};
-use std::io::{Write, stdout};
+use std::collections::HashMap;
+use std::io::{self, Error as IoError, Stdout, Write};
 use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
 use std::time::Duration;
+
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::style::{self, Stylize};
+use crossterm::terminal::{self, ClearType};
+use crossterm::{cursor, queue};
+
+use super::suggest;
+use super::types::{InteractiveError, RawModeGuard, Suggestion};
 
 pub struct SharedSearchState {
     pub is_loading: bool,
-    pub api_cache: std::collections::HashMap<String, Vec<Suggestion>>,
+    pub api_cache: HashMap<String, Vec<Suggestion>>,
     pub api_results: Vec<Suggestion>,
     pub api_version: usize,
 }
 
 /// Helper function to clear previous rendered lines from row 0 downwards and return to row 0.
-pub fn clear_widget_lines<W: Write>(out: &mut W, lines_count: usize) -> Result<(), std::io::Error> {
+pub fn clear_widget_lines<W: Write>(out: &mut W, lines_count: usize) -> Result<(), IoError> {
     if lines_count == 0 {
         return Ok(());
     }
@@ -39,7 +40,7 @@ pub fn clear_widget_lines<W: Write>(out: &mut W, lines_count: usize) -> Result<(
 }
 
 pub fn spawn_search_worker(rx: mpsc::Receiver<String>, shared: Arc<Mutex<SharedSearchState>>) {
-    std::thread::spawn(move || {
+    thread::spawn(move || {
         while let Ok(mut current_query) = rx.recv() {
             // Debounce loop: wait up to 250ms for newer keystrokes
             while let Ok(newer_query) = rx.recv_timeout(Duration::from_millis(250)) {
@@ -64,21 +65,16 @@ pub fn spawn_search_worker(rx: mpsc::Receiver<String>, shared: Arc<Mutex<SharedS
             }
 
             let already_cached = {
-                if let Ok(mut state) = shared.lock() {
-                    let SharedSearchState {
-                        api_cache,
-                        api_results,
-                        is_loading,
-                        api_version,
-                    } = &mut *state;
-                    if let Some(cached) = api_cache.get(&trimmed) {
-                        api_results.clone_from(cached);
-                        *is_loading = false;
-                        *api_version += 1;
+                if let Ok(mut guard) = shared.lock() {
+                    let state = &mut *guard;
+                    if let Some(cached) = state.api_cache.get(&trimmed) {
+                        state.api_results.clone_from(cached);
+                        state.is_loading = false;
+                        state.api_version += 1;
                         true
                     } else {
-                        *is_loading = true;
-                        *api_version += 1;
+                        state.is_loading = true;
+                        state.api_version += 1;
                         false
                     }
                 } else {
@@ -90,7 +86,7 @@ pub fn spawn_search_worker(rx: mpsc::Receiver<String>, shared: Arc<Mutex<SharedS
                 continue;
             }
 
-            let results = fetch_wca_competitions(&trimmed).unwrap_or_default();
+            let results = suggest::fetch_wca_competitions(&trimmed).unwrap_or_default();
 
             if let Ok(mut state) = shared.lock() {
                 state.api_cache.insert(trimmed, results.clone());
@@ -109,7 +105,7 @@ pub fn render_search_widget<W: Write>(
     selected_index: Option<usize>,
     is_loading: bool,
     previous_rendered_lines: usize,
-) -> Result<usize, std::io::Error> {
+) -> Result<usize, IoError> {
     clear_widget_lines(out, previous_rendered_lines)?;
 
     let mut lines_rendered: usize = 0;
@@ -201,7 +197,7 @@ pub struct SearchInputState<'a> {
 pub fn handle_search_key(
     state: &mut SearchInputState<'_>,
     key: KeyEvent,
-    out: &mut std::io::Stdout,
+    out: &mut Stdout,
     previous_rendered_lines: usize,
 ) -> Result<Option<String>, InteractiveError> {
     match key.code {
@@ -297,12 +293,12 @@ pub fn handle_search_key(
 /// debounced WCA API autocomplete and local file suggestions.
 pub fn prompt_competition_source() -> Result<String, InteractiveError> {
     let _raw_guard = RawModeGuard::enter()?;
-    let mut out = stdout();
+    let mut out = io::stdout();
 
     let (tx, rx) = mpsc::channel::<String>();
     let shared = Arc::new(Mutex::new(SharedSearchState {
         is_loading: false,
-        api_cache: std::collections::HashMap::new(),
+        api_cache: HashMap::new(),
         api_results: Vec::new(),
         api_version: 0,
     }));
@@ -327,7 +323,7 @@ pub fn prompt_competition_source() -> Result<String, InteractiveError> {
         }
 
         // Collect current suggestions
-        let local_suggestions = get_local_json_suggestions(&input_buffer);
+        let local_suggestions = suggest::get_local_json_suggestions(&input_buffer);
         let (api_suggestions, is_loading) = {
             let state = shared.lock().unwrap();
             (state.api_results.clone(), state.is_loading)

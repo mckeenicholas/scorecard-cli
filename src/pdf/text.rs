@@ -98,7 +98,11 @@ impl TextDrawer {
         }
 
         if let Some(local_name) = local {
-            let paren_pad = Self::CJK_PAREN_PAD_EM * font_size;
+            let paren_pad = if local_name.chars().any(is_cjk) {
+                Self::CJK_PAREN_PAD_EM * font_size
+            } else {
+                0.0
+            };
 
             let open_paren_str = if primary.is_empty() { "(" } else { " (" };
             Self::emit_text_ops(
@@ -111,13 +115,17 @@ impl TextDrawer {
             );
             cur_x += Self::estimate_width(open_paren_str, font_size, false) + paren_pad;
 
-            let local_font = if let Some(id) = custom_font {
-                PdfFontHandle::External(id.clone())
+            let local_font = if local_name.chars().any(|c| !is_win_ansi(c)) {
+                if let Some(id) = custom_font {
+                    PdfFontHandle::External(id.clone())
+                } else {
+                    PdfFontHandle::Builtin(BuiltinFont::Helvetica)
+                }
             } else {
                 PdfFontHandle::Builtin(BuiltinFont::Helvetica)
             };
             Self::emit_text_ops(ops, local_font, font_size, cur_x, baseline_y, local_name);
-            cur_x += Self::estimate_cjk_width(local_name, font_size) + paren_pad;
+            cur_x += Self::estimate_width(local_name, font_size, false) + paren_pad;
 
             Self::emit_text_ops(
                 ops,
@@ -143,23 +151,20 @@ impl TextDrawer {
         };
 
         if let Some(local_name) = local {
+            let paren_pad = if local_name.chars().any(is_cjk) {
+                Self::CJK_PAREN_PAD_EM * font_size
+            } else {
+                0.0
+            };
             let open_str = if primary.is_empty() { "(" } else { " (" };
             total += Self::estimate_width(open_str, font_size, false);
-            total += Self::CJK_PAREN_PAD_EM * font_size;
-            total += Self::estimate_cjk_width(local_name, font_size);
-            total += Self::CJK_PAREN_PAD_EM * font_size;
+            total += paren_pad;
+            total += Self::estimate_width(local_name, font_size, false);
+            total += paren_pad;
             total += Self::estimate_width(")", font_size, false);
         }
 
         total
-    }
-
-    /// Measures width of CJK/native string using 1.0em for full-width CJK characters.
-    pub fn estimate_cjk_width(text: &str, font_size: f32) -> f32 {
-        text.chars()
-            .map(|c| if is_cjk(c) { 1.0 } else { 0.50 })
-            .sum::<f32>()
-            * font_size
     }
 
     fn resolve_font(bold: bool) -> PdfFontHandle {

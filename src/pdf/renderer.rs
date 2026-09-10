@@ -1,16 +1,19 @@
-use crate::pdf::attempt::{ATTEMPT_LABELS, AttemptTableSpec};
-use crate::pdf::layout::RectSpec;
-use crate::pdf::table::{ColumnDef, TableDrawer};
-use crate::pdf::text::{TextAlign, TextDrawer, TextSpec, grey};
-use crate::pdf::theme::{DEFAULT_THEME, ScorecardTheme};
-use crate::scorecard::{
-    BlankScorecard, Competitor, CoverSheet, Scorecard, ScorecardItem, TimeLimitInfo,
-};
+use std::fmt::Write as _;
+
 use printpdf::FontId;
 use printpdf::graphics::PaintMode;
 use printpdf::ops::Op;
 use printpdf::units::Pt;
-use std::fmt::Write;
+
+use crate::pdf::attempt::{self, AttemptTableSpec};
+use crate::pdf::layout::RectSpec;
+use crate::pdf::table::{ColumnDef, TableDrawer, TableSpec};
+use crate::pdf::text::{self, TextAlign, TextDrawer, TextSpec};
+use crate::pdf::theme::{self, ScorecardTheme};
+use crate::scorecard::{
+    BlankScorecard, Competitor, CoverSheet, GroupNumber, RoundNumber, Scorecard, ScorecardItem,
+    TimeLimitInfo,
+};
 
 /// Canvas abstraction managing vertical flow, bounding geometry, and rendering primitives for a scorecard.
 pub struct CardPainter<'a> {
@@ -50,13 +53,17 @@ impl<'a> CardPainter<'a> {
 
     #[inline]
     pub fn set_outline(&mut self, val: f32, thickness: f32) {
-        self.ops.push(Op::SetOutlineColor { col: grey(val) });
+        self.ops.push(Op::SetOutlineColor {
+            col: text::grey(val),
+        });
         self.ops.push(Op::SetOutlineThickness { pt: Pt(thickness) });
     }
 
     #[inline]
     pub fn set_fill(&mut self, val: f32) {
-        self.ops.push(Op::SetFillColor { col: grey(val) });
+        self.ops.push(Op::SetFillColor {
+            col: text::grey(val),
+        });
     }
 
     #[inline]
@@ -135,7 +142,7 @@ impl<'a> CardPainter<'a> {
         TableDrawer::draw(
             self.ops,
             &mut self.cur_y,
-            crate::pdf::table::TableSpec {
+            TableSpec {
                 tbl_x: self.inner_x,
                 tbl_w: self.inner_w,
                 columns,
@@ -152,8 +159,8 @@ impl<'a> CardPainter<'a> {
     pub fn draw_event_info_table(
         &mut self,
         event_name: &str,
-        round_number: usize,
-        group_number: usize,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
         station_number: Option<usize>,
     ) {
         let mut round_buf = itoa::Buffer::new();
@@ -306,7 +313,7 @@ impl<'a> CardPainter<'a> {
 
         let mut h_col_x = self.inner_x;
         let h_text_y = top_y - header_h + (header_h - self.theme.header_font_size) / 2.0 + 1.0;
-        for (i, col) in crate::pdf::attempt::ATTEMPT_COLUMNS.iter().enumerate() {
+        for (i, col) in attempt::ATTEMPT_COLUMNS.iter().enumerate() {
             let w = spec.col_widths[i];
             TextDrawer::draw(
                 self.ops,
@@ -342,7 +349,7 @@ impl<'a> CardPainter<'a> {
 
         for i in 1..=spec.attempt_count {
             let label = if (1..=5).contains(&i) {
-                ATTEMPT_LABELS[i - 1]
+                attempt::ATTEMPT_LABELS[i - 1]
             } else {
                 ""
             };
@@ -641,7 +648,7 @@ impl ScorecardRenderer {
         bounds: RectSpec,
         custom_font: Option<&FontId>,
     ) {
-        let theme = DEFAULT_THEME.with_font(custom_font.cloned());
+        let theme = theme::DEFAULT_THEME.with_font(custom_font.cloned());
         let mut painter = CardPainter::new(ops, bounds, &theme);
         match card {
             ScorecardItem::Empty => {}

@@ -1,6 +1,11 @@
-use rustc_hash::FxHashMap;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroUsize;
+use std::ops::Deref;
+use std::{iter, str};
+
+use rustc_hash::FxHashMap;
+use serde::de::{Error as DeError, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// 10-character ASCII identifier for a WCA competitor in the format `NNNNLLLLNN` (e.g. `"2022SMIT01"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -25,11 +30,11 @@ impl WcaId {
     /// Returns the WCA ID as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(&self.0) }
+        unsafe { str::from_utf8_unchecked(&self.0) }
     }
 }
 
-impl std::ops::Deref for WcaId {
+impl Deref for WcaId {
     type Target = str;
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -37,8 +42,8 @@ impl std::ops::Deref for WcaId {
     }
 }
 
-impl std::fmt::Display for WcaId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for WcaId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
@@ -66,18 +71,18 @@ impl Serialize for WcaId {
 
 struct WcaIdVisitor;
 
-impl serde::de::Visitor<'_> for WcaIdVisitor {
+impl Visitor<'_> for WcaIdVisitor {
     type Value = WcaId;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str("a 10-character ASCII WCA ID")
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
-        WcaId::parse(v.trim()).ok_or_else(|| serde::de::Error::custom("invalid WCA ID format"))
+        WcaId::parse(v.trim()).ok_or_else(|| DeError::custom("invalid WCA ID format"))
     }
 }
 
@@ -92,23 +97,23 @@ impl<'de> Deserialize<'de> for WcaId {
 
 struct OptionalWcaIdVisitor;
 
-impl<'de> serde::de::Visitor<'de> for OptionalWcaIdVisitor {
+impl<'de> Visitor<'de> for OptionalWcaIdVisitor {
     type Value = Option<WcaId>;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str("null, empty string, or a 10-character ASCII WCA ID")
     }
 
     fn visit_none<E>(self) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
         Ok(None)
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
         Ok(None)
     }
@@ -122,7 +127,7 @@ impl<'de> serde::de::Visitor<'de> for OptionalWcaIdVisitor {
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
         let trimmed = v.trim();
         if trimmed.is_empty() {
@@ -130,7 +135,7 @@ impl<'de> serde::de::Visitor<'de> for OptionalWcaIdVisitor {
         } else {
             WcaId::parse(trimmed)
                 .map(Some)
-                .ok_or_else(|| serde::de::Error::custom("invalid WCA ID format"))
+                .ok_or_else(|| DeError::custom("invalid WCA ID format"))
         }
     }
 }
@@ -173,11 +178,11 @@ impl CountryIso2 {
     /// Returns the country code as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(&self.0) }
+        unsafe { str::from_utf8_unchecked(&self.0) }
     }
 }
 
-impl std::ops::Deref for CountryIso2 {
+impl Deref for CountryIso2 {
     type Target = str;
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -185,8 +190,8 @@ impl std::ops::Deref for CountryIso2 {
     }
 }
 
-impl std::fmt::Display for CountryIso2 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for CountryIso2 {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
@@ -226,19 +231,18 @@ impl Serialize for CountryIso2 {
 
 struct CountryIso2Visitor;
 
-impl serde::de::Visitor<'_> for CountryIso2Visitor {
+impl Visitor<'_> for CountryIso2Visitor {
     type Value = CountryIso2;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str("a 2-character ASCII country code")
     }
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
-        CountryIso2::parse(v.trim())
-            .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format"))
+        CountryIso2::parse(v.trim()).ok_or_else(|| DeError::custom("invalid Country ISO2 format"))
     }
 }
 
@@ -253,23 +257,23 @@ impl<'de> Deserialize<'de> for CountryIso2 {
 
 struct OptionalCountryIso2Visitor;
 
-impl<'de> serde::de::Visitor<'de> for OptionalCountryIso2Visitor {
+impl<'de> Visitor<'de> for OptionalCountryIso2Visitor {
     type Value = Option<CountryIso2>;
 
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter.write_str("null, empty string, or a 2-character ASCII country code")
     }
 
     fn visit_none<E>(self) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
         Ok(None)
     }
 
     fn visit_unit<E>(self) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
         Ok(None)
     }
@@ -283,7 +287,7 @@ impl<'de> serde::de::Visitor<'de> for OptionalCountryIso2Visitor {
 
     fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: DeError,
     {
         let trimmed = v.trim();
         if trimmed.is_empty() {
@@ -291,7 +295,7 @@ impl<'de> serde::de::Visitor<'de> for OptionalCountryIso2Visitor {
         } else {
             CountryIso2::parse(trimmed)
                 .map(Some)
-                .ok_or_else(|| serde::de::Error::custom("invalid Country ISO2 format"))
+                .ok_or_else(|| DeError::custom("invalid Country ISO2 format"))
         }
     }
 }
@@ -471,7 +475,7 @@ impl Round {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimeLimit {
-    pub centiseconds: isize,
+    pub centiseconds: i32,
     pub cumulative_round_ids: Option<Vec<String>>,
 }
 
@@ -479,7 +483,7 @@ pub struct TimeLimit {
 #[serde(rename_all = "camelCase")]
 pub struct Cutoff {
     pub number_of_attempts: usize,
-    pub attempt_result: isize,
+    pub attempt_result: i32,
 }
 
 /// Helper deserializer for WCIF `AdvancementCondition` level which can be an integer (`16`) or float (`16.0`).
@@ -595,7 +599,7 @@ pub struct Activity {
 impl Activity {
     /// Iterates over this activity and all of its immediate child activities.
     pub fn with_children(&self) -> impl Iterator<Item = &Activity> {
-        std::iter::once(self).chain(&self.child_activities)
+        iter::once(self).chain(&self.child_activities)
     }
 }
 

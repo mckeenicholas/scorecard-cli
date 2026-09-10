@@ -6,28 +6,33 @@ mod progress;
 mod scorecard;
 mod wcif;
 
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+use std::io::Error as IoError;
+use std::{env, process};
+
 use clap::Parser;
+use interactive::InteractiveError;
 use mimalloc::MiMalloc;
 use options::{Cli, ResolvedOptions};
-use partition::{SplitError, generate_partitioned_pdfs};
+use partition::SplitError;
 use pdf::PdfGenerationError;
 use scorecard::{PlannerError, ScorecardPlanner};
-use std::process;
 use wcif::{WcifLoadError, WcifLoader};
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-/// Top-level application error encompassing all potential failure modes.
+/// Top-level application error::Error encompassing all potential failure modes.
 #[derive(Debug)]
 pub enum AppError {
     Wcif(WcifLoadError),
-    Interactive(interactive::InteractiveError),
+    Interactive(InteractiveError),
     Planner(PlannerError),
     Split(SplitError),
     CreatePdf {
         path: String,
-        source: std::io::Error,
+        source: IoError,
     },
     GeneratePdf {
         path: String,
@@ -35,8 +40,8 @@ pub enum AppError {
     },
 }
 
-impl std::fmt::Display for AppError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for AppError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             AppError::Wcif(e) => write!(f, "{e}"),
             AppError::Interactive(e) => write!(f, "{e}"),
@@ -52,8 +57,8 @@ impl std::fmt::Display for AppError {
     }
 }
 
-impl std::error::Error for AppError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for AppError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             AppError::Wcif(e) => Some(e),
             AppError::Interactive(e) => Some(e),
@@ -104,7 +109,7 @@ fn resolve_options(cli: &Cli, comp: &wcif::Competition) -> ResolvedOptions {
 }
 
 fn init_cli_and_competition() -> Result<(Cli, wcif::Competition), AppError> {
-    if std::env::args().len() <= 1 {
+    if env::args().len() <= 1 {
         Ok(interactive::prompt_interactive_flow()?)
     } else {
         let parsed = Cli::parse();
@@ -131,6 +136,7 @@ fn run() -> Result<(), AppError> {
         &active_opts.cover_sheets_by,
         active_opts.print_stations,
         active_opts.print_one_name,
+        active_opts.local_names_first,
     )?;
 
     if plan.is_empty() {
@@ -139,7 +145,7 @@ fn run() -> Result<(), AppError> {
     }
 
     println!("{plan}");
-    generate_partitioned_pdfs(&comp, &plan.items, &active_opts)?;
+    partition::generate_partitioned_pdfs(&comp, &plan.items, &active_opts)?;
 
     Ok(())
 }

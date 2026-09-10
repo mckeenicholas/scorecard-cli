@@ -1,11 +1,13 @@
+use std::collections::HashSet;
+
+use inquire::{MultiSelect, Select};
+
 use super::types::{CoverSheetChoice, ExtraFlags, ExtraOption, InteractiveError, RoundChoice};
-use super::widget::prompt_competition_source;
+use super::widget;
 use crate::options::{CoverSheetBy, ResolvedOptions, SplitBy};
 use crate::pdf::{PageFormat, PaperSize};
-use crate::scorecard::{ScorecardPlanner, events::event_name_by_id};
+use crate::scorecard::{RoundId, ScorecardPlanner, WcaEvent, events};
 use crate::wcif::{Competition, WcifLoader};
-use inquire::{MultiSelect, Select};
-use std::collections::HashSet;
 
 pub fn list_select_prompt(option: &str) -> String {
     format!("{option}  (use ↑/↓ arrows, Enter to select):")
@@ -17,7 +19,7 @@ pub fn toggle_select_prompt(option: &str) -> String {
 
 pub fn prompt_competition_and_load() -> Result<(String, Competition), InteractiveError> {
     loop {
-        let source = prompt_competition_source()?;
+        let source = widget::prompt_competition_source()?;
         let trimmed = source.trim();
         if trimmed.is_empty() {
             println!("Please enter a competition ID or path.\n");
@@ -38,7 +40,7 @@ pub fn prompt_competition_and_load() -> Result<(String, Competition), Interactiv
 
 pub fn prompt_rounds_selection(comp: &Competition) -> Result<Vec<String>, InteractiveError> {
     let (default_targets, _) = ScorecardPlanner::resolve_all_targets(comp);
-    let default_round_ids: HashSet<String> =
+    let default_round_ids: HashSet<RoundId> =
         default_targets.into_iter().map(|t| t.round_id).collect();
 
     let round_choices: Vec<RoundChoice> = comp
@@ -46,17 +48,20 @@ pub fn prompt_rounds_selection(comp: &Competition) -> Result<Vec<String>, Intera
         .iter()
         .filter(|e| e.id != "333fm")
         .flat_map(|event| {
-            let event_name = event_name_by_id(&event.id).unwrap_or(&event.id);
+            let event_name = events::event_name_by_id(&event.id).unwrap_or(&event.id);
+            let wca_event = WcaEvent::from_id(&event.id);
             event
                 .rounds
                 .iter()
                 .enumerate()
-                .map(move |(round_idx, round)| {
-                    let round_num = round_idx + 1;
-                    RoundChoice {
-                        round_id: round.id.clone(),
+                .filter_map(move |(round_idx, round)| {
+                    let wca_event = wca_event?;
+                    let round_num = u32::try_from(round_idx + 1).ok()?;
+                    let round_id = RoundId::new(wca_event, round_num);
+                    Some(RoundChoice {
+                        round_id,
                         display: format!("{event_name} - Round {round_num} ({})", round.id),
-                    }
+                    })
                 })
         })
         .collect();
@@ -73,7 +78,10 @@ pub fn prompt_rounds_selection(comp: &Competition) -> Result<Vec<String>, Intera
             .with_default(&default_round_indices)
             .prompt()?;
 
-    Ok(selected_rounds.into_iter().map(|r| r.round_id).collect())
+    Ok(selected_rounds
+        .into_iter()
+        .map(|r| r.round_id.to_string())
+        .collect())
 }
 
 pub fn prompt_paper_size(default_paper: PaperSize) -> Result<PaperSize, InteractiveError> {

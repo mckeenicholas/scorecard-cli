@@ -1,9 +1,13 @@
+use std::fmt::{self, Display, Formatter, Write as _};
+use std::path::PathBuf;
+
+use crossterm::style::Stylize as _;
+
 use super::cli::Cli;
 use super::types::{CoverSheetBy, OptionsCompatibilityError, SplitBy};
 use crate::pdf::{PageFormat, PaperSize};
+use crate::progress;
 use crate::wcif::GroupifierCompetitionConfig;
-use crossterm::style::Stylize;
-use std::path::PathBuf;
 
 /// Fully resolved scorecard generation options after merging CLI flags,
 /// WCIF Groupifier config extensions, and default values.
@@ -14,12 +18,12 @@ pub struct ResolvedOptions {
     pub cover_sheets: bool,
     pub cover_sheets_by: Vec<CoverSheetBy>,
     pub split: Vec<SplitBy>,
-    pub local_names_first: bool, // TODO: wire to renderer
+    pub local_names_first: bool,
     pub print_one_name: bool,
-    pub print_stations: bool,                // TODO: wire to renderer
-    pub scramble_checker_top_ranked: bool,   // TODO: wire to renderer
+    pub print_stations: bool,
+    pub scramble_checker_top_ranked: bool, // TODO: wire to renderer
     pub scramble_checker_final_rounds: bool, // TODO: wire to renderer
-    pub scramble_checker_blank: bool,        // TODO: wire to renderer
+    pub scramble_checker_blank: bool,      // TODO: wire to renderer
     pub start_group_on_new_page: bool,
     pub font: Option<PathBuf>,
 }
@@ -197,8 +201,6 @@ impl ResolvedOptions {
 
     /// Formats a human-readable configuration summary table inside a modern card.
     pub fn format_summary(&self) -> String {
-        use std::fmt::Write;
-
         let green_check = "✔".green();
         let red_x = "✖".red();
 
@@ -292,12 +294,12 @@ impl ResolvedOptions {
             lines.push(buf);
         }
 
-        crate::progress::draw_box("Configuration Summary", &lines)
+        progress::draw_box("Configuration Summary", &lines)
     }
 }
 
-impl std::fmt::Display for ResolvedOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ResolvedOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.format_summary())
     }
 }

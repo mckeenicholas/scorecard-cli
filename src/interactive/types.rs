@@ -1,5 +1,13 @@
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
+use std::io::{self, Error as IoError};
+
 use crossterm::{cursor, execute, terminal};
-use std::io::stdout;
+use inquire::InquireError;
+use serde::Deserialize;
+
+use crate::scorecard::RoundId;
+use crate::wcif::WcifLoadError;
 
 #[derive(Debug, Clone)]
 pub struct Suggestion {
@@ -9,12 +17,12 @@ pub struct Suggestion {
 
 #[derive(Debug, Clone)]
 pub struct RoundChoice {
-    pub round_id: String,
+    pub round_id: RoundId,
     pub display: String,
 }
 
-impl std::fmt::Display for RoundChoice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for RoundChoice {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.display)
     }
 }
@@ -26,8 +34,8 @@ pub enum CoverSheetChoice {
     Stage,
 }
 
-impl std::fmt::Display for CoverSheetChoice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for CoverSheetChoice {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             CoverSheetChoice::Round => write!(f, "By Round (one for the entire round)"),
             CoverSheetChoice::Group => write!(f, "By Group (one per group across all stages)"),
@@ -47,8 +55,8 @@ pub enum ExtraOption {
     ScrambleCheckerBlank,
 }
 
-impl std::fmt::Display for ExtraOption {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ExtraOption {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             ExtraOption::StartGroupOnNewPage => {
                 write!(
@@ -85,25 +93,25 @@ pub struct ExtraFlags {
 /// Error encountered during the interactive terminal prompt flow.
 #[derive(Debug)]
 pub enum InteractiveError {
-    Io(std::io::Error),
-    Prompt(inquire::InquireError),
-    Wcif(crate::wcif::WcifLoadError),
+    Io(IoError),
+    Prompt(InquireError),
+    Wcif(WcifLoadError),
     Aborted,
 }
 
-impl std::fmt::Display for InteractiveError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for InteractiveError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            InteractiveError::Io(e) => write!(f, "Interactive I/O error: {e}"),
-            InteractiveError::Prompt(e) => write!(f, "Interactive prompt error: {e}"),
+            InteractiveError::Io(e) => write!(f, "Interactive I/O error::Error: {e}"),
+            InteractiveError::Prompt(e) => write!(f, "Interactive prompt error::Error: {e}"),
             InteractiveError::Wcif(e) => write!(f, "{e}"),
             InteractiveError::Aborted => write!(f, "Interactive flow aborted by user"),
         }
     }
 }
 
-impl std::error::Error for InteractiveError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl Error for InteractiveError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             InteractiveError::Io(e) => Some(e),
             InteractiveError::Prompt(e) => Some(e),
@@ -113,20 +121,20 @@ impl std::error::Error for InteractiveError {
     }
 }
 
-impl From<std::io::Error> for InteractiveError {
-    fn from(err: std::io::Error) -> Self {
+impl From<IoError> for InteractiveError {
+    fn from(err: IoError) -> Self {
         InteractiveError::Io(err)
     }
 }
 
-impl From<inquire::InquireError> for InteractiveError {
-    fn from(err: inquire::InquireError) -> Self {
+impl From<InquireError> for InteractiveError {
+    fn from(err: InquireError) -> Self {
         InteractiveError::Prompt(err)
     }
 }
 
-impl From<crate::wcif::WcifLoadError> for InteractiveError {
-    fn from(err: crate::wcif::WcifLoadError) -> Self {
+impl From<WcifLoadError> for InteractiveError {
+    fn from(err: WcifLoadError) -> Self {
         InteractiveError::Wcif(err)
     }
 }
@@ -134,7 +142,7 @@ impl From<crate::wcif::WcifLoadError> for InteractiveError {
 pub struct RawModeGuard;
 
 impl RawModeGuard {
-    pub fn enter() -> Result<Self, std::io::Error> {
+    pub fn enter() -> Result<Self, IoError> {
         terminal::enable_raw_mode()?;
         Ok(Self)
     }
@@ -143,11 +151,11 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
-        let _ = execute!(stdout(), cursor::Show);
+        let _ = execute!(io::stdout(), cursor::Show);
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 pub struct WcaItem {
     pub id: String,
     pub name: String,

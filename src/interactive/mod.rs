@@ -5,26 +5,21 @@ pub mod widget;
 
 pub use types::InteractiveError;
 
-use prompts::{
-    prompt_competition_and_load, prompt_cover_sheets_selection, prompt_extra_options_selection,
-    prompt_page_format, prompt_paper_size, prompt_rounds_selection, prompt_split_selection,
-};
-
 use crate::options::{Cli, ResolvedOptions};
 use crate::wcif::Competition;
 
 /// Runs the interactive terminal UI flow, prompting the user with pre-selected defaults from WCIF.
 pub fn prompt_interactive_flow() -> Result<(Cli, Competition), InteractiveError> {
-    let (comp_source, comp) = prompt_competition_and_load()?;
+    let (comp_source, comp) = prompts::prompt_competition_and_load()?;
     let default_opts =
         ResolvedOptions::resolve(&Cli::default(), comp.get_groupifier_config().as_ref());
 
-    let events = prompt_rounds_selection(&comp)?;
-    let paper = prompt_paper_size(default_opts.paper)?;
-    let format = prompt_page_format(default_opts.format)?;
-    let cover_sheets = prompt_cover_sheets_selection(&default_opts)?;
-    let split = prompt_split_selection()?;
-    let extras = prompt_extra_options_selection(&default_opts, format)?;
+    let events = prompts::prompt_rounds_selection(&comp)?;
+    let paper = prompts::prompt_paper_size(default_opts.paper)?;
+    let format = prompts::prompt_page_format(default_opts.format)?;
+    let cover_sheets = prompts::prompt_cover_sheets_selection(&default_opts)?;
+    let split = prompts::prompt_split_selection()?;
+    let extras = prompts::prompt_extra_options_selection(&default_opts, format)?;
 
     let cli = Cli {
         comp_source: Some(comp_source),

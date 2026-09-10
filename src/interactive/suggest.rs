@@ -1,6 +1,13 @@
-use super::types::{Suggestion, WcaItem};
-use crate::wcif::expand_tilde;
+use std::fmt::Write as _;
+use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
+
+use ureq::config::Config;
+use ureq::{Agent, Error as UreqError};
+
+use super::types::{Suggestion, WcaItem};
+use crate::wcif;
 
 /// Scans the local filesystem for .json files and directories.
 /// Supports relative paths ('.' and 'tests/'), '~' (home directory), and '/' (root directory).
@@ -26,7 +33,7 @@ pub fn get_relative_json_suggestions(query: &str) -> Vec<Suggestion> {
     let query_lower = query.to_lowercase();
     let mut files: Vec<String> = [".", "tests"]
         .into_iter()
-        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .filter_map(|dir| fs::read_dir(dir).ok())
         .flatten()
         .flatten()
         .filter_map(|entry| {
@@ -55,17 +62,17 @@ pub fn get_relative_json_suggestions(query: &str) -> Vec<Suggestion> {
         .collect()
 }
 
-pub fn parse_path_query(query: &str) -> (std::path::PathBuf, String, &str) {
+pub fn parse_path_query(query: &str) -> (PathBuf, String, &str) {
     if query == "~" {
-        (expand_tilde("~"), "~/".to_string(), "")
+        (wcif::expand_tilde("~"), "~/".to_string(), "")
     } else if let Some(last_sep) = query.rfind(['/', '\\']) {
         let parent_str = &query[..=last_sep];
         let filter = &query[last_sep + 1..];
-        let scan_path = expand_tilde(parent_str);
+        let scan_path = wcif::expand_tilde(parent_str);
         (scan_path, parent_str.to_string(), filter)
     } else {
         (
-            expand_tilde("~"),
+            wcif::expand_tilde("~"),
             "~/".to_string(),
             query.trim_start_matches('~'),
         )
@@ -77,7 +84,7 @@ pub fn get_path_suggestions(query: &str) -> Vec<Suggestion> {
     let (scan_dir, display_prefix, filter) = parse_path_query(query);
     let filter_lower = filter.to_lowercase();
 
-    let (mut file_suggestions, mut dir_suggestions) = std::fs::read_dir(&scan_dir)
+    let (mut file_suggestions, mut dir_suggestions) = fs::read_dir(&scan_dir)
         .into_iter()
         .flatten()
         .flatten()
@@ -162,8 +169,8 @@ pub fn wca_items_to_suggestions(items: Vec<WcaItem>) -> Vec<Suggestion> {
 }
 
 /// Queries the WCA API for competitions matching the search term.
-pub fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, ureq::Error> {
-    let agent: ureq::Agent = ureq::config::Config::builder()
+pub fn fetch_wca_competitions(query: &str) -> Result<Vec<Suggestion>, UreqError> {
+    let agent: Agent = Config::builder()
         .timeout_global(Some(Duration::from_millis(2500)))
         .http_status_as_error(false)
         .build()
@@ -189,7 +196,6 @@ pub fn format_wca_suggestion(
     country_iso2: Option<&str>,
     id_width: usize,
 ) -> String {
-    use std::fmt::Write as FmtWrite;
     let mut s = String::with_capacity(id_width.max(id.len()) + name.len() + 10);
     let _ = write!(s, "{id:<id_width$}  {name}");
     if let Some(c) = country_iso2 {

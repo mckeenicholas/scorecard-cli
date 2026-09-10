@@ -1,6 +1,7 @@
-use printpdf::font::{ParsedFont, PdfFontParseWarning};
 use std::fs;
 use std::path::Path;
+
+use printpdf::font::{ParsedFont, PdfFontParseWarning};
 
 #[cfg(target_os = "linux")]
 const CANDIDATE_FONTS: &[&str] = &[
@@ -73,11 +74,12 @@ impl FontResolver {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use printpdf::PdfDocument;
     use printpdf::ops::PdfPage;
     use printpdf::serialize::PdfSaveOptions;
     use printpdf::units::Mm;
+
+    use super::*;
 
     #[test]
     fn test_font_resolver_detection() {

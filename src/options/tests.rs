@@ -1,9 +1,10 @@
+use clap::Parser;
+
 use super::cli::Cli;
 use super::resolved::ResolvedOptions;
 use super::types::{CoverSheetBy, OptionsCompatibilityError, SplitBy};
 use crate::pdf::{PageFormat, PaperSize};
 use crate::wcif::GroupifierCompetitionConfig;
-use clap::Parser;
 
 #[test]
 fn test_cli_parsing_basic() {

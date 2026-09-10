@@ -11,9 +11,11 @@ pub use model::{
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use model::CountryIso2;
     use std::path::Path;
+
+    use model::CountryIso2;
+
+    use super::*;
 
     #[test]
     fn test_load_wcif_from_file() {

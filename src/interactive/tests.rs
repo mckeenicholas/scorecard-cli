@@ -1,9 +1,9 @@
-use super::suggest::{format_wca_suggestion, get_local_json_suggestions};
+use super::suggest;
 use super::types::{CoverSheetChoice, ExtraOption};
 
 #[test]
 fn test_local_json_suggestions() {
-    let suggestions = get_local_json_suggestions("test_wcif");
+    let suggestions = suggest::get_local_json_suggestions("test_wcif");
     assert!(
         suggestions
             .iter()
@@ -12,7 +12,7 @@ fn test_local_json_suggestions() {
         "Expected test_wcif.json to be found in local json suggestions"
     );
 
-    let empty_query = get_local_json_suggestions("");
+    let empty_query = suggest::get_local_json_suggestions("");
     assert!(
         !empty_query.is_empty(),
         "Expected empty query to return all local json files"
@@ -21,7 +21,7 @@ fn test_local_json_suggestions() {
 
 #[test]
 fn test_tilde_and_root_path_suggestions() {
-    let root_suggestions = get_local_json_suggestions("/");
+    let root_suggestions = suggest::get_local_json_suggestions("/");
     assert!(
         !root_suggestions.is_empty(),
         "Expected root path suggestions to return directories"
@@ -31,7 +31,7 @@ fn test_tilde_and_root_path_suggestions() {
         "Root suggestions should begin with /"
     );
 
-    let tilde_suggestions = get_local_json_suggestions("~");
+    let tilde_suggestions = suggest::get_local_json_suggestions("~");
     assert!(
         !tilde_suggestions.is_empty(),
         "Expected home path suggestions to return entries"
@@ -41,7 +41,7 @@ fn test_tilde_and_root_path_suggestions() {
         "Tilde suggestions should begin with ~/"
     );
 
-    let tilde_slash = get_local_json_suggestions("~/");
+    let tilde_slash = suggest::get_local_json_suggestions("~/");
     assert!(
         !tilde_slash.is_empty(),
         "Expected ~/ suggestions to return entries"
@@ -80,8 +80,10 @@ fn test_extra_option_display() {
 
 #[test]
 fn test_format_wca_suggestion_alignment() {
-    let s1 = format_wca_suggestion("NAC2026", "North American Championship", Some("US"), 22);
-    let s2 = format_wca_suggestion("AjaxAutumnAM2026", "Ajax Autumn AM 2026", Some("CA"), 22);
+    let s1 =
+        suggest::format_wca_suggestion("NAC2026", "North American Championship", Some("US"), 22);
+    let s2 =
+        suggest::format_wca_suggestion("AjaxAutumnAM2026", "Ajax Autumn AM 2026", Some("CA"), 22);
     assert_eq!(
         s1,
         "NAC2026                 North American Championship (US)"

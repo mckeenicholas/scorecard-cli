@@ -1,8 +1,10 @@
+use std::error::Error;
+use std::fmt;
+use std::str::FromStr;
+
 use clap::ValueEnum;
 use printpdf::units::Mm;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::str::FromStr;
 
 /// Supported paper sizes for scorecard printing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum, Serialize, Deserialize)]
@@ -31,7 +33,7 @@ impl fmt::Display for ParsePaperSizeError {
     }
 }
 
-impl std::error::Error for ParsePaperSizeError {}
+impl Error for ParsePaperSizeError {}
 
 impl FromStr for PaperSize {
     type Err = ParsePaperSizeError;
@@ -65,7 +67,7 @@ impl fmt::Display for ParsePageFormatError {
     }
 }
 
-impl std::error::Error for ParsePageFormatError {}
+impl Error for ParsePageFormatError {}
 
 /// Page layout format for scorecards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum, Serialize, Deserialize)]

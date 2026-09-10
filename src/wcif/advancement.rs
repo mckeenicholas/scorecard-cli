@@ -107,9 +107,10 @@ impl AdvancementCalculator {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use super::*;
     use crate::wcif::model::{AdvancementCondition, Person, Registration};
-    use std::num::NonZeroUsize;
 
     fn make_test_comp() -> Competition {
         Competition {
