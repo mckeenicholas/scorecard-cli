@@ -69,8 +69,7 @@ pub fn prompt_rounds_selection(comp: &Competition) -> Result<Vec<String>, Intera
     let default_round_indices: Vec<usize> = round_choices
         .iter()
         .enumerate()
-        .filter(|(_, choice)| default_round_ids.contains(&choice.round_id))
-        .map(|(idx, _)| idx)
+        .filter_map(|(idx, choice)| default_round_ids.contains(&choice.round_id).then_some(idx))
         .collect();
 
     let selected_rounds =
@@ -128,18 +127,20 @@ pub fn prompt_cover_sheets_selection(
         let indices: Vec<usize> = cover_choices
             .iter()
             .enumerate()
-            .filter(|(_, choice)| match choice {
-                CoverSheetChoice::Round => {
-                    default_opts.cover_sheets_by.contains(&CoverSheetBy::Round)
-                }
-                CoverSheetChoice::Group => {
-                    default_opts.cover_sheets_by.contains(&CoverSheetBy::Group)
-                }
-                CoverSheetChoice::Stage => {
-                    default_opts.cover_sheets_by.contains(&CoverSheetBy::Stage)
-                }
+            .filter_map(|(idx, choice)| {
+                let matches = match choice {
+                    CoverSheetChoice::Round => {
+                        default_opts.cover_sheets_by.contains(&CoverSheetBy::Round)
+                    }
+                    CoverSheetChoice::Group => {
+                        default_opts.cover_sheets_by.contains(&CoverSheetBy::Group)
+                    }
+                    CoverSheetChoice::Stage => {
+                        default_opts.cover_sheets_by.contains(&CoverSheetBy::Stage)
+                    }
+                };
+                matches.then_some(idx)
             })
-            .map(|(idx, _)| idx)
             .collect();
         if indices.is_empty() {
             vec![2] // Default to Stage if cover_sheets was enabled without criteria
@@ -208,16 +209,20 @@ pub fn prompt_extra_options_selection(
     let default_extra_indices: Vec<usize> = extra_options_list
         .iter()
         .enumerate()
-        .filter(|(_, opt)| match opt {
-            ExtraOption::StartGroupOnNewPage => default_opts.start_group_on_new_page,
-            ExtraOption::PrintStations => default_opts.print_stations,
-            ExtraOption::LocalNamesFirst => default_opts.local_names_first,
-            ExtraOption::PrintOneName => default_opts.print_one_name,
-            ExtraOption::ScrambleCheckerTopRanked => default_opts.scramble_checker_top_ranked,
-            ExtraOption::ScrambleCheckerFinalRounds => default_opts.scramble_checker_final_rounds,
-            ExtraOption::ScrambleCheckerBlank => default_opts.scramble_checker_blank,
+        .filter_map(|(idx, opt)| {
+            let enabled = match opt {
+                ExtraOption::StartGroupOnNewPage => default_opts.start_group_on_new_page,
+                ExtraOption::PrintStations => default_opts.print_stations,
+                ExtraOption::LocalNamesFirst => default_opts.local_names_first,
+                ExtraOption::PrintOneName => default_opts.print_one_name,
+                ExtraOption::ScrambleCheckerTopRanked => default_opts.scramble_checker_top_ranked,
+                ExtraOption::ScrambleCheckerFinalRounds => {
+                    default_opts.scramble_checker_final_rounds
+                }
+                ExtraOption::ScrambleCheckerBlank => default_opts.scramble_checker_blank,
+            };
+            enabled.then_some(idx)
         })
-        .map(|(idx, _)| idx)
         .collect();
 
     let extra_options = MultiSelect::new(

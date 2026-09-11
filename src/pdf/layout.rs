@@ -45,11 +45,11 @@ impl FromStr for PaperSize {
 
 impl fmt::Display for PaperSize {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PaperSize::A4 => write!(f, "A4"),
-            PaperSize::Letter => write!(f, "Letter"),
-            PaperSize::A6 => write!(f, "A6"),
-        }
+        f.write_str(match self {
+            PaperSize::A4 => "A4",
+            PaperSize::Letter => "Letter",
+            PaperSize::A6 => "A6",
+        })
     }
 }
 
@@ -90,10 +90,10 @@ impl FromStr for PageFormat {
 
 impl fmt::Display for PageFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PageFormat::Group => write!(f, "group"),
-            PageFormat::Stacked => write!(f, "stacked"),
-        }
+        f.write_str(match self {
+            PageFormat::Group => "group",
+            PageFormat::Stacked => "stacked",
+        })
     }
 }
 

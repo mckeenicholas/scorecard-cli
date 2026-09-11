@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter, Write as _};
@@ -32,20 +33,20 @@ pub fn slugify(s: &str) -> String {
     slug
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SplitKey {
-    pub stage: Option<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SplitKey<'a> {
+    pub stage: Option<&'a str>,
     pub event: Option<RoundId>,
     pub group: Option<GroupNumber>,
 }
 
-impl SplitKey {
-    pub fn to_filename(&self, comp_id: &str) -> String {
+impl<'a> SplitKey<'a> {
+    pub fn to_filename(self, comp_id: &str) -> String {
         let mut name = String::with_capacity(comp_id.len() + 48);
         let _ = write!(name, "{comp_id}-scorecards");
-        if let Some(ref stage) = self.stage {
+        if let Some(stage) = self.stage {
             name.push('-');
-            name.push_str(stage);
+            name.push_str(&slugify(stage));
         }
         if let Some(round_id) = self.event {
             let _ = write!(name, "-{round_id}");
@@ -58,12 +59,12 @@ impl SplitKey {
     }
 }
 
-pub fn build_split_key(
-    card: &ScorecardItem<'_>,
+pub fn build_split_key<'a>(
+    card: &ScorecardItem<'a>,
     has_stage: bool,
     has_event: bool,
     has_group: bool,
-) -> SplitKey {
+) -> SplitKey<'a> {
     let (stage_name, event, round_number, group_number) = match card {
         ScorecardItem::Scorecard(sc) => (
             sc.stage_name,
@@ -82,7 +83,7 @@ pub fn build_split_key(
     };
 
     SplitKey {
-        stage: has_stage.then(|| slugify(stage_name.unwrap_or("no-stage"))),
+        stage: has_stage.then_some(stage_name.unwrap_or("no-stage")),
         event: if has_event && let Some(ev) = event {
             Some(RoundId::new(ev, round_number))
         } else {
@@ -109,7 +110,7 @@ pub fn partition_scorecards<'a>(
     cards
         .iter()
         .fold(
-            BTreeMap::<SplitKey, Vec<ScorecardItem<'a>>>::new(),
+            BTreeMap::<SplitKey<'a>, Vec<ScorecardItem<'a>>>::new(),
             |mut acc, card| {
                 let key = build_split_key(card, has_stage, has_event, has_group);
                 acc.entry(key).or_default().push(*card);
@@ -229,18 +230,21 @@ pub fn validate_card_bundle_placement(
                 round_number,
                 group_number,
             };
-            if let Some(existing_file) = bundle_partition_map.get(&bundle_key) {
-                if *existing_file != filename.as_str() {
-                    return Err(SplitError::SplitBundle {
-                        event_id: event.code().to_owned(),
-                        round_number,
-                        group_number,
-                        first_file: (*existing_file).to_owned(),
-                        second_file: filename.clone(),
-                    });
+            match bundle_partition_map.entry(bundle_key) {
+                Entry::Occupied(entry) => {
+                    if *entry.get() != filename.as_str() {
+                        return Err(SplitError::SplitBundle {
+                            event_id: event.code().to_owned(),
+                            round_number,
+                            group_number,
+                            first_file: (*entry.get()).to_owned(),
+                            second_file: filename.clone(),
+                        });
+                    }
                 }
-            } else {
-                bundle_partition_map.insert(bundle_key, filename.as_str());
+                Entry::Vacant(entry) => {
+                    entry.insert(filename.as_str());
+                }
             }
         }
     }

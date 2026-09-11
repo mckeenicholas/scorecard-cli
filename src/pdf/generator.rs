@@ -184,7 +184,10 @@ impl PdfGenerator {
         cards: &[ScorecardItem<'a>],
         cards_per_page: usize,
     ) -> Vec<ScorecardItem<'a>> {
-        if cards_per_page <= 1 || cards.is_empty() {
+        if cards.is_empty() {
+            return Vec::new();
+        }
+        if cards_per_page <= 1 {
             return cards.to_vec();
         }
 
@@ -326,7 +329,7 @@ mod tests {
         let padded = PdfGenerator::pad_groups_to_page_boundaries(&cards, 4);
         // Zero blank spaces needed
         assert_eq!(padded.len(), 5);
-        assert!(!padded.iter().any(|c| c.is_empty()));
+        assert!(!padded.iter().any(ScorecardItem::is_empty));
     }
 
     #[test]
@@ -351,7 +354,7 @@ mod tests {
         let cards = vec![g1, g2];
         let padded = PdfGenerator::pad_groups_to_page_boundaries(&cards, 1);
         assert_eq!(padded.len(), 2);
-        assert!(!padded.iter().any(|c| c.is_empty()));
+        assert!(!padded.iter().any(ScorecardItem::is_empty));
     }
 
     #[test]
@@ -392,9 +395,8 @@ mod tests {
         use crate::scorecard::{PlanConfig, ScorecardPlanner};
         use crate::wcif::loader::WcifLoader;
 
-        let comp = match WcifLoader::load_from_file(Path::new("BramptonSummer.json")) {
-            Ok(c) => c,
-            Err(_) => return,
+        let Ok(comp) = WcifLoader::load_from_file(Path::new("BramptonSummer.json")) else {
+            return;
         };
 
         // Test with cover sheets = stage
@@ -407,15 +409,18 @@ mod tests {
         let layout = PageLayout::new(PaperSize::A4);
         let padded = PdfGenerator::pad_groups_to_page_boundaries(&plan, layout.cards_per_page);
 
+        // Helper to access page p (1-indexed, 4 cards per page)
+        let page = |p: usize| &padded[(p - 1) * 4..p * 4];
+
         // Verify that Page 5 (last page of G1 Blue Stage) has 1 scorecard and 3 empty padding items:
-        let chunks: Vec<_> = padded.chunks(4).collect();
-        assert!(matches!(chunks[4][0], ScorecardItem::Scorecard(_)));
-        assert!(matches!(chunks[4][1], ScorecardItem::Empty));
-        assert!(matches!(chunks[4][2], ScorecardItem::Empty));
-        assert!(matches!(chunks[4][3], ScorecardItem::Empty));
+        let page5 = page(5);
+        assert!(matches!(page5[0], ScorecardItem::Scorecard(_)));
+        assert!(matches!(page5[1], ScorecardItem::Empty));
+        assert!(matches!(page5[2], ScorecardItem::Empty));
+        assert!(matches!(page5[3], ScorecardItem::Empty));
 
         // Verify Page 6 starts with the Red Stage cover sheet on slot 0:
-        if let ScorecardItem::CoverSheet(cs) = chunks[5][0] {
+        if let ScorecardItem::CoverSheet(cs) = page(6)[0] {
             assert_eq!(cs.group_number, 1);
             assert_eq!(cs.stage_name, Some("Red Stage"));
         } else {
@@ -423,13 +428,14 @@ mod tests {
         }
 
         // Verify Page 10 ends G1 Red Stage with 3 empty padding items:
-        assert!(matches!(chunks[9][0], ScorecardItem::Scorecard(_)));
-        assert!(matches!(chunks[9][1], ScorecardItem::Empty));
-        assert!(matches!(chunks[9][2], ScorecardItem::Empty));
-        assert!(matches!(chunks[9][3], ScorecardItem::Empty));
+        let page10 = page(10);
+        assert!(matches!(page10[0], ScorecardItem::Scorecard(_)));
+        assert!(matches!(page10[1], ScorecardItem::Empty));
+        assert!(matches!(page10[2], ScorecardItem::Empty));
+        assert!(matches!(page10[3], ScorecardItem::Empty));
 
         // Verify Page 11 starts G2 Blue Stage cover sheet on slot 0:
-        if let ScorecardItem::CoverSheet(cs) = chunks[10][0] {
+        if let ScorecardItem::CoverSheet(cs) = page(11)[0] {
             assert_eq!(cs.group_number, 2);
             assert_eq!(cs.stage_name, Some("Blue Stage"));
         } else {

@@ -27,11 +27,11 @@ pub enum SplitBy {
 
 impl Display for SplitBy {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            SplitBy::Event => write!(f, "event"),
-            SplitBy::Group => write!(f, "group"),
-            SplitBy::Stage => write!(f, "stage"),
-        }
+        f.write_str(match self {
+            SplitBy::Event => "event",
+            SplitBy::Group => "group",
+            SplitBy::Stage => "stage",
+        })
     }
 }
 
@@ -102,12 +102,12 @@ impl CoverSheetBy {
 
 impl Display for CoverSheetBy {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CoverSheetBy::Round => write!(f, "round"),
-            CoverSheetBy::Group => write!(f, "group"),
-            CoverSheetBy::Stage => write!(f, "stage"),
-            CoverSheetBy::None => write!(f, "none"),
-        }
+        f.write_str(match self {
+            CoverSheetBy::Round => "round",
+            CoverSheetBy::Group => "group",
+            CoverSheetBy::Stage => "stage",
+            CoverSheetBy::None => "none",
+        })
     }
 }
 

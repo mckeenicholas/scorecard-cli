@@ -36,11 +36,11 @@ pub enum CoverSheetChoice {
 
 impl Display for CoverSheetChoice {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CoverSheetChoice::Round => write!(f, "By Round (one for the entire round)"),
-            CoverSheetChoice::Group => write!(f, "By Group (one per group across all stages)"),
-            CoverSheetChoice::Stage => write!(f, "By Stage (one per group on each stage)"),
-        }
+        f.write_str(match self {
+            CoverSheetChoice::Round => "By Round (one for the entire round)",
+            CoverSheetChoice::Group => "By Group (one per group across all stages)",
+            CoverSheetChoice::Stage => "By Stage (one per group on each stage)",
+        })
     }
 }
 
@@ -57,26 +57,17 @@ pub enum ExtraOption {
 
 impl Display for ExtraOption {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
+        f.write_str(match self {
             ExtraOption::StartGroupOnNewPage => {
-                write!(
-                    f,
-                    "Start group on new page (insert blank spaces to align top-left)"
-                )
+                "Start group on new page (insert blank spaces to align top-left)"
             }
-            ExtraOption::PrintStations => write!(f, "Print station numbers"),
-            ExtraOption::LocalNamesFirst => write!(f, "Display local names first"),
-            ExtraOption::PrintOneName => write!(f, "Only print one name"),
-            ExtraOption::ScrambleCheckerTopRanked => {
-                write!(f, "Scramble checker for top ranked competitors")
-            }
-            ExtraOption::ScrambleCheckerFinalRounds => {
-                write!(f, "Scramble checker for final rounds")
-            }
-            ExtraOption::ScrambleCheckerBlank => {
-                write!(f, "Scramble checker for blank scorecards")
-            }
-        }
+            ExtraOption::PrintStations => "Print station numbers",
+            ExtraOption::LocalNamesFirst => "Display local names first",
+            ExtraOption::PrintOneName => "Only print one name",
+            ExtraOption::ScrambleCheckerTopRanked => "Scramble checker for top ranked competitors",
+            ExtraOption::ScrambleCheckerFinalRounds => "Scramble checker for final rounds",
+            ExtraOption::ScrambleCheckerBlank => "Scramble checker for blank scorecards",
+        })
     }
 }
 

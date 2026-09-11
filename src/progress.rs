@@ -42,11 +42,11 @@ pub fn visible_width(s: &str) -> usize {
 }
 
 /// Formats a list of content lines into a rounded box card with a title.
-pub fn draw_box(title: &str, content_lines: &[String]) -> String {
+pub fn draw_box<S: AsRef<str>>(title: &str, content_lines: &[S]) -> String {
     let title_chars = title.chars().count();
     let content_width = content_lines
         .iter()
-        .map(|l| visible_width(l))
+        .map(|l| visible_width(l.as_ref()))
         .max()
         .unwrap_or(36)
         .max(title_chars + 4)
@@ -58,7 +58,10 @@ pub fn draw_box(title: &str, content_lines: &[String]) -> String {
     // Box-drawing characters ('─', '│', corners) are 3 bytes each in UTF-8.
     // Account for 3-byte horizontal borders plus line text, padding, and ANSI codes.
     let border_bytes = (inner_width * 3 + 4) * 2;
-    let content_bytes = content_lines.iter().map(|l| l.len() + 16).sum::<usize>();
+    let content_bytes = content_lines
+        .iter()
+        .map(|l| l.as_ref().len() + 16)
+        .sum::<usize>();
     let est_size = border_bytes + content_bytes;
     let mut out = String::with_capacity(est_size);
 
@@ -67,8 +70,9 @@ pub fn draw_box(title: &str, content_lines: &[String]) -> String {
 
     // Content lines: │ Content... │
     for line in content_lines {
-        let pad = content_width.saturating_sub(visible_width(line));
-        let _ = writeln!(out, "│ {line}{:pad$} │", "");
+        let line_ref = line.as_ref();
+        let pad = content_width.saturating_sub(visible_width(line_ref));
+        let _ = writeln!(out, "│ {line_ref}{:pad$} │", "");
     }
 
     // Bottom border: ╰────────...──╯
@@ -92,7 +96,7 @@ mod tests {
 
     #[test]
     fn test_draw_box() {
-        let lines = vec!["Item 1: Hello".to_string(), "Item 2: World".to_string()];
+        let lines = vec!["Item 1: Hello".to_owned(), "Item 2: World".to_owned()];
         let card = draw_box("Header", &lines);
         assert!(card.contains("╭─ Header"));
         assert!(card.contains("│ Item 1: Hello"));
@@ -102,9 +106,9 @@ mod tests {
     #[test]
     fn test_draw_box_ansi_alignment() {
         let lines = vec![
-            "Plain text line".to_string(),
-            "\x1b[32m✔\x1b[0m - Option with green check".to_string(),
-            "\x1b[31m✖\x1b[0m - Option with red cross".to_string(),
+            "Plain text line".to_owned(),
+            "\x1b[32m✔\x1b[0m - Option with green check".to_owned(),
+            "\x1b[31m✖\x1b[0m - Option with red cross".to_owned(),
         ];
         let card = draw_box("ANSI Test", &lines);
         let card_lines: Vec<&str> = card.lines().collect();

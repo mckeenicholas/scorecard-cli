@@ -16,9 +16,9 @@ use crate::scorecard::{
 };
 
 /// Canvas abstraction managing vertical flow, bounding geometry, and rendering primitives for a scorecard.
-pub struct CardPainter<'a> {
+pub struct CardPainter<'a, 't> {
     pub ops: &'a mut Vec<Op>,
-    pub theme: &'a ScorecardTheme,
+    pub theme: &'a ScorecardTheme<'t>,
     pub bounds: RectSpec,
     pub inner_x: f32,
     pub inner_w: f32,
@@ -26,8 +26,8 @@ pub struct CardPainter<'a> {
     pub min_y: f32,
 }
 
-impl<'a> CardPainter<'a> {
-    pub fn new(ops: &'a mut Vec<Op>, bounds: RectSpec, theme: &'a ScorecardTheme) -> Self {
+impl<'a, 't> CardPainter<'a, 't> {
+    pub fn new(ops: &'a mut Vec<Op>, bounds: RectSpec, theme: &'a ScorecardTheme<'t>) -> Self {
         let pad = theme.padding;
         let inner_x = bounds.x + pad;
         let inner_w = bounds.w - 2.0 * pad;
@@ -261,7 +261,7 @@ impl<'a> CardPainter<'a> {
                 start_x,
                 baseline_y,
                 font_size,
-                custom_font: self.theme.custom_font.as_ref(),
+                custom_font: self.theme.custom_font,
             },
         );
     }
@@ -649,7 +649,7 @@ impl ScorecardRenderer {
         bounds: RectSpec,
         custom_font: Option<&FontId>,
     ) {
-        let theme = theme::DEFAULT_THEME.with_font(custom_font.cloned());
+        let theme = theme::DEFAULT_THEME.with_font(custom_font);
         let mut painter = CardPainter::new(ops, bounds, &theme);
         match card {
             ScorecardItem::Empty => {}

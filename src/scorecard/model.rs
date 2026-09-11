@@ -149,11 +149,11 @@ impl PartialOrd<WcaResult> for i32 {
 impl Display for WcaResult {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.0 <= 0 {
-            return match self.0 {
-                -1 => write!(f, "DNF"),
-                -2 => write!(f, "DNS"),
-                _ => write!(f, "None"),
-            };
+            return f.write_str(match self.0 {
+                -1 => "DNF",
+                -2 => "DNS",
+                _ => "None",
+            });
         }
 
         let total_seconds = self.0 / 100;
@@ -739,16 +739,20 @@ impl ScorecardPlan<'_> {
 
     /// Formats the plan summary as a readable table with Event, Round, Status, and Competitors columns.
     pub fn format_summary(&self) -> String {
-        let mut lines = Vec::new();
+        let mut lines: Vec<Cow<'_, str>> = Vec::new();
         let mut row_buf = String::new();
 
         for note in &self.notes {
-            lines.push(format!("Note: {note}"));
+            lines.push(Cow::Owned(format!("Note: {note}")));
         }
 
         if !self.summaries.is_empty() {
-            lines.push("Event      Round      Status       Competitors".to_owned());
-            lines.push("────────   ────────   ──────────   ──────────────".to_owned());
+            lines.push(Cow::Borrowed(
+                "Event      Round      Status       Competitors",
+            ));
+            lines.push(Cow::Borrowed(
+                "────────   ────────   ──────────   ──────────────",
+            ));
 
             for summary in &self.summaries {
                 row_buf.clear();
@@ -784,7 +788,7 @@ impl ScorecardPlan<'_> {
                         );
                     }
                 }
-                lines.push(row_buf.clone());
+                lines.push(Cow::Owned(std::mem::take(&mut row_buf)));
             }
         }
 

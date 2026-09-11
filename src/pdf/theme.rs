@@ -1,8 +1,8 @@
 use printpdf::FontId;
 
 /// Visual theme and geometric styling parameters for scorecard rendering.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ScorecardTheme {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScorecardTheme<'a> {
     pub padding: f32,
     pub border_thickness: f32,
     pub header_bg_grey: f32,
@@ -12,18 +12,18 @@ pub struct ScorecardTheme {
     pub header_font_size: f32,
     pub cell_font_size: f32,
     pub comp_name_font_size: f32,
-    pub custom_font: Option<FontId>,
+    pub custom_font: Option<&'a FontId>,
 }
 
-impl ScorecardTheme {
-    pub fn with_font(mut self, font: Option<FontId>) -> Self {
+impl<'a> ScorecardTheme<'a> {
+    pub fn with_font(mut self, font: Option<&'a FontId>) -> Self {
         self.custom_font = font;
         self
     }
 }
 
 /// Default styling theme matching official WCA competition scorecard aesthetics.
-pub const DEFAULT_THEME: ScorecardTheme = ScorecardTheme {
+pub const DEFAULT_THEME: ScorecardTheme<'static> = ScorecardTheme {
     padding: 7.0,
     border_thickness: 0.75,
     header_bg_grey: 0.92,

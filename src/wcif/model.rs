@@ -389,9 +389,9 @@ impl Competition {
     pub fn get_groupifier_config(&self) -> Option<GroupifierCompetitionConfig> {
         self.extensions.iter().find_map(|ext| {
             if ext.id == "groupifier.CompetitionConfig" {
-                serde_json::from_value::<GroupifierCompetitionConfig>(ext.data.clone()).ok()
+                GroupifierCompetitionConfig::deserialize(&ext.data).ok()
             } else if ext.id == "org.worldcubeassociation.groupifier" {
-                serde_json::from_value::<GroupifierExtensionData>(ext.data.clone())
+                GroupifierExtensionData::deserialize(&ext.data)
                     .ok()
                     .and_then(|ext_data| ext_data.competition_config)
             } else {
@@ -518,8 +518,7 @@ where
     match opt {
         Some(NumOrFloat::Int(n)) => Ok(Some(n)),
         Some(NumOrFloat::Float(f)) => {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            if (0.0..=(u32::MAX as f64)).contains(&f) && f.is_finite() {
+            if f >= 0.0 && f.is_finite() {
                 Ok(Some(f.round() as usize))
             } else {
                 Ok(None)

@@ -639,11 +639,11 @@ impl ScorecardPlanner {
                 let round_number = u32::try_from(idx + 1).ok()?;
                 let round_id = RoundId::new(wca_event, round_number);
                 let round_activity = ActivityCode::from_round(round_id);
-                let has_assignments =
-                    has_competitor_assignments(comp, activity_map, round_activity);
-                (round_number == 1 || has_assignments).then_some(GenerationTarget {
+                let is_open_round = round_number == 1
+                    || has_competitor_assignments(comp, activity_map, round_activity);
+                is_open_round.then_some(GenerationTarget {
                     round_id,
-                    is_open_round: round_number == 1 || has_assignments,
+                    is_open_round,
                 })
             })
     }
@@ -655,6 +655,15 @@ impl ScorecardPlanner {
         requested_events: &[S],
     ) -> (Vec<GenerationTarget>, Vec<String>) {
         let activity_map = comp.build_activity_schedule_map();
+        Self::resolve_targets_with_map(comp, requested_events, &activity_map)
+    }
+
+    /// Resolves generation targets using a precomputed activity schedule map.
+    pub fn resolve_targets_with_map<S: AsRef<str>>(
+        comp: &Competition,
+        requested_events: &[S],
+        activity_map: &FxHashMap<usize, ScheduledActivityInfo<'_>>,
+    ) -> (Vec<GenerationTarget>, Vec<String>) {
         let mut notes = Vec::new();
 
         if requested_events.is_empty() {
@@ -662,7 +671,7 @@ impl ScorecardPlanner {
                 .events
                 .iter()
                 .filter(|e| e.id != "333fm")
-                .flat_map(|event| Self::targets_for_event(comp, &activity_map, event))
+                .flat_map(|event| Self::targets_for_event(comp, activity_map, event))
                 .collect();
             return (targets, notes);
         }
@@ -687,14 +696,14 @@ impl ScorecardPlanner {
             if let Some(r_num) = parsed.round_number {
                 let round_id = RoundId::new(parsed.event, r_num);
                 let round_activity = ActivityCode::from_round(round_id);
-                let has_assignments =
-                    has_competitor_assignments(comp, &activity_map, round_activity);
+                let is_open_round =
+                    r_num == 1 || has_competitor_assignments(comp, activity_map, round_activity);
                 targets.push(GenerationTarget {
                     round_id,
-                    is_open_round: r_num == 1 || has_assignments,
+                    is_open_round,
                 });
             } else {
-                targets.extend(Self::targets_for_event(comp, &activity_map, event));
+                targets.extend(Self::targets_for_event(comp, activity_map, event));
             }
         }
 
@@ -707,8 +716,9 @@ impl ScorecardPlanner {
         requested_events: &[S],
         config: PlanConfig<'_>,
     ) -> Result<ScorecardPlan<'a>, PlannerError> {
-        let (targets, notes) = Self::resolve_targets(comp, requested_events);
         let activity_map = comp.build_activity_schedule_map();
+        let (targets, notes) =
+            Self::resolve_targets_with_map(comp, requested_events, &activity_map);
         let mut plan = ScorecardPlan::new(notes);
 
         for target in &targets {

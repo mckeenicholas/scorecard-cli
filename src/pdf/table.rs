@@ -53,7 +53,12 @@ pub struct TableDrawer;
 
 impl TableDrawer {
     /// Draws a styled grid table, advancing `cur_y` to the bottom of the table.
-    pub fn draw(ops: &mut Vec<Op>, cur_y: &mut f32, spec: TableSpec<'_>, theme: &ScorecardTheme) {
+    pub fn draw(
+        ops: &mut Vec<Op>,
+        cur_y: &mut f32,
+        spec: TableSpec<'_>,
+        theme: &ScorecardTheme<'_>,
+    ) {
         let top_y = *cur_y;
         let row_count = f32::from(u16::try_from(spec.rows.len()).unwrap_or(0));
         let total_h = spec.header_h + spec.row_h * row_count;
@@ -71,7 +76,7 @@ impl TableDrawer {
         ops: &mut Vec<Op>,
         spec: &TableSpec<'_>,
         top_y: f32,
-        theme: &ScorecardTheme,
+        theme: &ScorecardTheme<'_>,
     ) {
         ops.push(Op::SetFillColor {
             col: text::grey(theme.header_bg_grey),
@@ -87,7 +92,7 @@ impl TableDrawer {
         ops: &mut Vec<Op>,
         spec: &TableSpec<'_>,
         top_y: f32,
-        theme: &ScorecardTheme,
+        theme: &ScorecardTheme<'_>,
     ) {
         let mut col_x = spec.tbl_x;
         let text_y = top_y - spec.header_h + (spec.header_h - theme.header_font_size) / 2.0 + 1.0;
@@ -111,7 +116,12 @@ impl TableDrawer {
         }
     }
 
-    fn draw_row_cells(ops: &mut Vec<Op>, spec: &TableSpec<'_>, top_y: f32, theme: &ScorecardTheme) {
+    fn draw_row_cells(
+        ops: &mut Vec<Op>,
+        spec: &TableSpec<'_>,
+        top_y: f32,
+        theme: &ScorecardTheme<'_>,
+    ) {
         let mut row_top = top_y - spec.header_h;
         for &row in spec.rows {
             let mut cell_x = spec.tbl_x;
@@ -151,7 +161,7 @@ impl TableDrawer {
         spec: &TableSpec<'_>,
         top_y: f32,
         bottom_y: f32,
-        theme: &ScorecardTheme,
+        theme: &ScorecardTheme<'_>,
     ) {
         Self::set_grid_stroke_style(ops, theme);
         Self::draw_outer_table_border(ops, spec, bottom_y, top_y - bottom_y);
@@ -159,7 +169,7 @@ impl TableDrawer {
         Self::draw_vertical_dividers(ops, spec, top_y, bottom_y);
     }
 
-    fn set_grid_stroke_style(ops: &mut Vec<Op>, theme: &ScorecardTheme) {
+    fn set_grid_stroke_style(ops: &mut Vec<Op>, theme: &ScorecardTheme<'_>) {
         ops.push(Op::SetOutlineColor {
             col: text::grey(theme.grid_line_grey),
         });
