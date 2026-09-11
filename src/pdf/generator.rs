@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use super::font::FontResolver;
 use super::layout::{PageFormat, PageLayout};
 use super::renderer::ScorecardRenderer;
-use crate::scorecard::{GroupNumber, RoundNumber, ScorecardItem, WcaEvent};
+use crate::scorecard::ScorecardItem;
 use crate::wcif::Competition;
 
 /// Error encountered during PDF generation or file serialization.
@@ -192,7 +192,7 @@ impl PdfGenerator {
         }
 
         let mut result = Vec::with_capacity(cards.len() + 16);
-        let mut current_group: Option<(WcaEvent, RoundNumber, GroupNumber, Option<&'a str>)> = None;
+        let mut current_group = None;
         let mut cards_on_page = 0;
 
         for &card in cards {

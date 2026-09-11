@@ -114,10 +114,10 @@ impl AttemptTableSpec {
         let total_table_h =
             Self::HEADER_H + (total_attempts * row_h) + (total_banners * Self::BANNER_H);
 
-        let cols: &'static [ColumnDef<'static>] = if has_checker {
-            &ATTEMPT_COLUMNS_6
+        let cols = if has_checker {
+            &ATTEMPT_COLUMNS_6[..]
         } else {
-            &ATTEMPT_COLUMNS_5
+            &ATTEMPT_COLUMNS_5[..]
         };
 
         let mut col_widths = [0.0; 6];

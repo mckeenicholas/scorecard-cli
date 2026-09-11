@@ -140,10 +140,10 @@ impl Display for PlannerError {
 
 impl Error for PlannerError {}
 
-fn find_event_and_round<'a>(
-    comp: &'a Competition,
-    target: &GenerationTarget,
-) -> Result<(&'a Event, &'a Round), PlannerError> {
+fn find_event_and_round(
+    comp: &Competition,
+    target: GenerationTarget,
+) -> Result<(&Event, &Round), PlannerError> {
     let event = comp
         .events
         .iter()
@@ -165,7 +165,7 @@ fn find_event_and_round<'a>(
 }
 
 fn resolve_assignment<'a>(
-    person: &'a Person,
+    person: &Person,
     activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
     round_target: ActivityCode,
 ) -> Option<(GroupNumber, Option<usize>, Option<&'a str>)> {
@@ -275,12 +275,12 @@ pub fn should_print_scramble_checker_for_blank(
 
 struct RoundPlanningContext<'a, 'b> {
     comp: &'a Competition,
-    target: &'b GenerationTarget,
+    target: GenerationTarget,
     event: &'a Event,
     round: &'a Round,
     attempt_count: usize,
     activity_map: &'b FxHashMap<usize, ScheduledActivityInfo<'a>>,
-    config: &'b PlanConfig<'b>,
+    config: PlanConfig<'b>,
 }
 
 type GroupKey<'a> = (GroupNumber, Option<&'a str>);
@@ -330,7 +330,7 @@ fn collect_open_round_competitors<'a>(
         }
 
         let needs_scramble_checker =
-            should_print_scramble_checker_for_competitor(person, ctx.event, ctx.round, ctx.config);
+            should_print_scramble_checker_for_competitor(person, ctx.event, ctx.round, &ctx.config);
 
         let competitor = Competitor::from_person(
             person,
@@ -528,7 +528,7 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
     }
 
     let needs_scramble_checker =
-        should_print_scramble_checker_for_blank(ctx.event, ctx.round, ctx.config);
+        should_print_scramble_checker_for_blank(ctx.event, ctx.round, &ctx.config);
 
     plan.items.extend((0..adv_result.blank_count).map(|_| {
         ScorecardItem::Blank(
@@ -624,11 +624,11 @@ impl ScorecardPlanner {
         Self::resolve_targets::<&str>(comp, &[])
     }
 
-    fn targets_for_event<'a>(
-        comp: &'a Competition,
-        activity_map: &'a FxHashMap<usize, ScheduledActivityInfo<'a>>,
-        event: &'a Event,
-    ) -> impl Iterator<Item = GenerationTarget> + 'a {
+    fn targets_for_event(
+        comp: &Competition,
+        activity_map: &FxHashMap<usize, ScheduledActivityInfo<'_>>,
+        event: &Event,
+    ) -> impl Iterator<Item = GenerationTarget> {
         let opt_wca_event = WcaEvent::from_id(&event.id);
         event
             .rounds
@@ -722,7 +722,7 @@ impl ScorecardPlanner {
         let mut plan = ScorecardPlan::new(notes);
 
         for target in &targets {
-            Self::plan_target_round(comp, target, &activity_map, config, &mut plan)?;
+            Self::plan_target_round(comp, *target, &activity_map, config, &mut plan)?;
         }
 
         plan.assign_numbers();
@@ -740,7 +740,7 @@ impl ScorecardPlanner {
 
     fn plan_target_round<'a>(
         comp: &'a Competition,
-        target: &GenerationTarget,
+        target: GenerationTarget,
         activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
         config: PlanConfig<'_>,
         plan: &mut ScorecardPlan<'a>,
@@ -755,7 +755,7 @@ impl ScorecardPlanner {
             round,
             attempt_count,
             activity_map,
-            config: &config,
+            config,
         };
 
         if target.is_open_round {

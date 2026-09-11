@@ -408,7 +408,7 @@ impl Competition {
     /// Returns an iterator over all accepted competitors registered for an event.
     pub fn accepted_competitors_for_event<'a>(
         &'a self,
-        event_id: &'a str,
+        event_id: &str,
     ) -> impl Iterator<Item = &'a Person> {
         self.persons.iter().filter(move |person| {
             person.registration.as_ref().is_some_and(|reg| {

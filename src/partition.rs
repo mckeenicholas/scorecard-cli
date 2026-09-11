@@ -40,7 +40,7 @@ pub struct SplitKey<'a> {
     pub group: Option<GroupNumber>,
 }
 
-impl<'a> SplitKey<'a> {
+impl SplitKey<'_> {
     pub fn to_filename(self, comp_id: &str) -> String {
         let mut name = String::with_capacity(comp_id.len() + 48);
         let _ = write!(name, "{comp_id}-scorecards");
@@ -213,7 +213,7 @@ impl From<options::OptionsCompatibilityError> for SplitError {
 pub fn validate_card_bundle_placement(
     partitions: &[(String, Cow<'_, [ScorecardItem<'_>]>)],
 ) -> Result<(), SplitError> {
-    let mut bundle_partition_map: HashMap<BundleKey<'_>, &str> = HashMap::new();
+    let mut bundle_partition_map: HashMap<_, &str> = HashMap::new();
 
     for (filename, partition_cards) in partitions {
         for card in partition_cards.as_ref() {

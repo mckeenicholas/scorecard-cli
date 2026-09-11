@@ -16,9 +16,9 @@ use crate::scorecard::{
 };
 
 /// Canvas abstraction managing vertical flow, bounding geometry, and rendering primitives for a scorecard.
-pub struct CardPainter<'a, 't> {
+pub struct CardPainter<'a> {
     pub ops: &'a mut Vec<Op>,
-    pub theme: &'a ScorecardTheme<'t>,
+    pub theme: ScorecardTheme<'a>,
     pub bounds: RectSpec,
     pub inner_x: f32,
     pub inner_w: f32,
@@ -26,8 +26,8 @@ pub struct CardPainter<'a, 't> {
     pub min_y: f32,
 }
 
-impl<'a, 't> CardPainter<'a, 't> {
-    pub fn new(ops: &'a mut Vec<Op>, bounds: RectSpec, theme: &'a ScorecardTheme<'t>) -> Self {
+impl<'a> CardPainter<'a> {
+    pub fn new(ops: &'a mut Vec<Op>, bounds: RectSpec, theme: ScorecardTheme<'a>) -> Self {
         let pad = theme.padding;
         let inner_x = bounds.x + pad;
         let inner_w = bounds.w - 2.0 * pad;
@@ -150,7 +150,7 @@ impl<'a, 't> CardPainter<'a, 't> {
                 header_h,
                 row_h,
             },
-            self.theme,
+            &self.theme,
         );
     }
 
@@ -650,7 +650,7 @@ impl ScorecardRenderer {
         custom_font: Option<&FontId>,
     ) {
         let theme = theme::DEFAULT_THEME.with_font(custom_font);
-        let mut painter = CardPainter::new(ops, bounds, &theme);
+        let mut painter = CardPainter::new(ops, bounds, theme);
         match card {
             ScorecardItem::Empty => {}
             ScorecardItem::CoverSheet(cover) => painter.draw_cover_sheet(cover),
