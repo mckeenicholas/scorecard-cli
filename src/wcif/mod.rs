@@ -47,8 +47,12 @@ mod tests {
         assert_eq!(&*code, "CA");
         assert_eq!(code, "CA");
         assert_eq!(code.to_bytes(), *b"CA");
-        assert_eq!(code.0, *b"CA");
         assert_eq!(format!("{code}"), "CA");
+
+        assert_eq!(CountryIso2::new(*b"US"), CountryIso2::parse("US"));
+        assert!(CountryIso2::new([0xFF, 0x00]).is_none());
+        assert_eq!(WcaId::new(*b"2022SMIT01"), WcaId::parse("2022SMIT01"));
+        assert!(WcaId::new([0xFF; 10]).is_none());
 
         assert!(CountryIso2::parse("C").is_none());
         assert!(CountryIso2::parse("CAN").is_none());

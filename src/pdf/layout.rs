@@ -205,18 +205,18 @@ impl RectSpec {
 /// `PageLayout` encapsulates paper geometry and scorecard positioning grid math.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PageLayout {
-    pub paper_size: PaperSize,
-    pub page_w_mm: f32,
-    pub page_h_mm: f32,
-    pub page_w_pt: f32,
-    pub page_h_pt: f32,
-    pub cards_per_page: usize,
-    pub margin_x: f32,
-    pub margin_y: f32,
-    pub gap_x: f32,
-    pub gap_y: f32,
-    pub card_w: f32,
-    pub card_h: f32,
+    paper_size: PaperSize,
+    page_w_mm: f32,
+    page_h_mm: f32,
+    page_w_pt: f32,
+    page_h_pt: f32,
+    cards_per_page: usize,
+    margin_x: f32,
+    margin_y: f32,
+    gap_x: f32,
+    gap_y: f32,
+    card_w: f32,
+    card_h: f32,
 }
 
 impl PageLayout {
@@ -243,6 +243,52 @@ impl PageLayout {
             card_w,
             card_h,
         }
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn page_w_mm(&self) -> f32 {
+        self.page_w_mm
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn page_h_mm(&self) -> f32 {
+        self.page_h_mm
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn cards_per_page(&self) -> usize {
+        self.cards_per_page
+    }
+
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub const fn page_w_pt(&self) -> f32 {
+        self.page_w_pt
+    }
+
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub const fn page_h_pt(&self) -> f32 {
+        self.page_h_pt
+    }
+
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub const fn card_w(&self) -> f32 {
+        self.card_w
+    }
+
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub const fn card_h(&self) -> f32 {
+        self.card_h
     }
 
     /// Returns the bounding box rectangle for the card at index `idx` on the current page (`0..cards_per_page`).
@@ -308,9 +354,9 @@ mod tests {
     #[test]
     fn test_layout_a4_quadrants() {
         let layout = PageLayout::new(PaperSize::A4);
-        assert_eq!(layout.cards_per_page, 4);
-        assert!(layout.card_w > 200.0);
-        assert!(layout.card_h > 300.0);
+        assert_eq!(layout.cards_per_page(), 4);
+        assert!(layout.card_w() > 200.0);
+        assert!(layout.card_h() > 300.0);
 
         let r0 = layout.card_rect(0); // Top-left
         let r1 = layout.card_rect(1); // Top-right
@@ -328,11 +374,11 @@ mod tests {
     #[test]
     fn test_layout_a6_single_card() {
         let layout = PageLayout::new(PaperSize::A6);
-        assert_eq!(layout.cards_per_page, 1);
+        assert_eq!(layout.cards_per_page(), 1);
         let r = layout.card_rect(0);
         assert_eq!(r.x, 14.0);
         assert_eq!(r.y, 14.0);
-        assert_eq!(r.w, layout.page_w_pt - 28.0);
-        assert_eq!(r.h, layout.page_h_pt - 28.0);
+        assert_eq!(r.w, layout.page_w_pt() - 28.0);
+        assert_eq!(r.h, layout.page_h_pt() - 28.0);
     }
 }

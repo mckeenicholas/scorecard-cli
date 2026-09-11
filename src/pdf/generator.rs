@@ -117,7 +117,7 @@ impl PdfGenerator {
         cards: &[ScorecardItem<'_>],
         font_id: Option<&FontId>,
     ) -> Vec<PdfPage> {
-        if self.format == PageFormat::Stacked && self.layout.cards_per_page > 1 {
+        if self.format == PageFormat::Stacked && self.layout.cards_per_page() > 1 {
             self.build_stacked_pages(cards, font_id)
         } else {
             self.build_grouped_pages(cards, font_id)
@@ -132,7 +132,7 @@ impl PdfGenerator {
     ) -> Vec<PdfPage> {
         let layout = self.layout;
         let total_cards = cards.len();
-        let k = layout.cards_per_page;
+        let k = layout.cards_per_page();
         let total_pages = total_cards.div_ceil(k);
 
         (0..total_pages)
@@ -147,7 +147,7 @@ impl PdfGenerator {
                         ScorecardRenderer::draw_card(&mut ops, card, rect, font_id);
                     }
                 }
-                PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
+                PdfPage::new(Mm(layout.page_w_mm()), Mm(layout.page_h_mm()), ops)
             })
             .collect()
     }
@@ -159,21 +159,25 @@ impl PdfGenerator {
         font_id: Option<&FontId>,
     ) -> Vec<PdfPage> {
         let layout = self.layout;
-        let padded_cards = (self.start_group_on_new_page && layout.cards_per_page > 1)
-            .then(|| Self::pad_groups_to_page_boundaries(cards, layout.cards_per_page));
+        let padded_cards = (self.start_group_on_new_page && layout.cards_per_page() > 1)
+            .then(|| Self::pad_groups_to_page_boundaries(cards, layout.cards_per_page()));
         let effective_cards = padded_cards.as_deref().unwrap_or(cards);
 
         effective_cards
-            .par_chunks(layout.cards_per_page)
+            .par_chunks(layout.cards_per_page())
             .map(|chunk| {
-                let mut ops = Vec::with_capacity(if layout.cards_per_page == 1 { 64 } else { 256 });
+                let mut ops = Vec::with_capacity(if layout.cards_per_page() == 1 {
+                    64
+                } else {
+                    256
+                });
 
                 for (idx, card) in chunk.iter().enumerate() {
                     let rect = layout.card_rect(idx);
                     ScorecardRenderer::draw_card(&mut ops, card, rect, font_id);
                 }
 
-                PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
+                PdfPage::new(Mm(layout.page_w_mm()), Mm(layout.page_h_mm()), ops)
             })
             .collect()
     }
@@ -407,7 +411,7 @@ mod tests {
         )
         .unwrap();
         let layout = PageLayout::new(PaperSize::A4);
-        let padded = PdfGenerator::pad_groups_to_page_boundaries(&plan, layout.cards_per_page);
+        let padded = PdfGenerator::pad_groups_to_page_boundaries(&plan, layout.cards_per_page());
 
         // Helper to access page p (1-indexed, 4 cards per page)
         let page = |p: usize| &padded[(p - 1) * 4..p * 4];

@@ -137,7 +137,7 @@ fn run() -> Result<(), AppError> {
     }
 
     println!("{plan}");
-    partition::generate_partitioned_pdfs(&comp, &plan.items, &active_opts)?;
+    partition::generate_partitioned_pdfs(&comp, &plan, &active_opts)?;
 
     Ok(())
 }

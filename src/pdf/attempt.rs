@@ -27,15 +27,15 @@ pub const ATTEMPT_LABELS: [&str; 5] = ["1", "2", "3", "4", "5"];
 /// Specifications and precomputed geometry for the scorecard attempt table.
 #[derive(Debug)]
 pub struct AttemptTableSpec {
-    pub attempt_count: usize,
-    pub cutoff_attempts: usize,
-    pub cutoff_banner: Option<String>,
-    pub row_h: f32,
-    pub total_table_h: f32,
-    pub col_widths: [f32; 6],
-    pub col_count: usize,
-    pub footer_text: Option<String>,
-    pub has_checker: bool,
+    pub(crate) attempt_count: usize,
+    pub(crate) cutoff_attempts: usize,
+    pub(crate) cutoff_banner: Option<String>,
+    pub(crate) row_h: f32,
+    pub(crate) total_table_h: f32,
+    pub(crate) col_widths: [f32; 6],
+    pub(crate) col_count: usize,
+    pub(crate) footer_text: Option<String>,
+    pub(crate) has_checker: bool,
 }
 
 impl AttemptTableSpec {

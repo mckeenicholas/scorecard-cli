@@ -17,13 +17,13 @@ use crate::scorecard::{
 
 /// Canvas abstraction managing vertical flow, bounding geometry, and rendering primitives for a scorecard.
 pub struct CardPainter<'a> {
-    pub ops: &'a mut Vec<Op>,
-    pub theme: ScorecardTheme<'a>,
-    pub bounds: RectSpec,
-    pub inner_x: f32,
-    pub inner_w: f32,
-    pub cur_y: f32,
-    pub min_y: f32,
+    ops: &'a mut Vec<Op>,
+    theme: ScorecardTheme<'a>,
+    bounds: RectSpec,
+    inner_x: f32,
+    inner_w: f32,
+    cur_y: f32,
+    min_y: f32,
 }
 
 impl<'a> CardPainter<'a> {

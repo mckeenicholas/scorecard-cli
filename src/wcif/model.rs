@@ -12,15 +12,21 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub struct WcaId([u8; 10]);
 
 impl WcaId {
-    /// Creates a `WcaId` from a 10-byte ASCII array.
-    pub const fn new(bytes: [u8; 10]) -> Self {
-        Self(bytes)
+    /// Creates a `WcaId` from a 10-byte ASCII array. Returns `None` if not valid ASCII.
+    #[must_use]
+    pub const fn new(bytes: [u8; 10]) -> Option<Self> {
+        if bytes.is_ascii() {
+            Some(Self(bytes))
+        } else {
+            None
+        }
     }
 
     /// Parses a 10-character ASCII WCA ID (e.g. `"2022SMIT01"`). Returns `None` if invalid.
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         let arr: [u8; 10] = s.as_bytes().try_into().ok()?;
-        arr.is_ascii().then_some(Self(arr))
+        Self::new(arr)
     }
 
     /// Returns the WCA ID as a string slice.
@@ -53,6 +59,14 @@ impl PartialEq<str> for WcaId {
 impl PartialEq<&str> for WcaId {
     fn eq(&self, other: &&str) -> bool {
         self.as_str() == *other
+    }
+}
+
+impl TryFrom<[u8; 10]> for WcaId {
+    type Error = ();
+
+    fn try_from(bytes: [u8; 10]) -> Result<Self, Self::Error> {
+        Self::new(bytes).ok_or(())
     }
 }
 
@@ -147,18 +161,24 @@ where
 /// 2-character ASCII country code (ISO 3166-1 alpha-2, e.g. `"US"`, `"CA"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct CountryIso2(pub [u8; 2]);
+pub struct CountryIso2([u8; 2]);
 
 impl CountryIso2 {
-    /// Creates a `CountryIso2` from a 2-byte ASCII array.
-    pub const fn new(bytes: [u8; 2]) -> Self {
-        Self(bytes)
+    /// Creates a `CountryIso2` from a 2-byte ASCII array. Returns `None` if not valid ASCII.
+    #[must_use]
+    pub const fn new(bytes: [u8; 2]) -> Option<Self> {
+        if bytes[0].is_ascii() && bytes[1].is_ascii() {
+            Some(Self(bytes))
+        } else {
+            None
+        }
     }
 
     /// Parses a 2-character ASCII country code (e.g. `"US"`). Returns `None` if invalid.
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         let arr: [u8; 2] = s.as_bytes().try_into().ok()?;
-        arr.is_ascii().then_some(Self(arr))
+        Self::new(arr)
     }
 
     /// Returns the country code as a 2-byte ASCII array.
@@ -200,9 +220,11 @@ impl PartialEq<&str> for CountryIso2 {
     }
 }
 
-impl From<[u8; 2]> for CountryIso2 {
-    fn from(bytes: [u8; 2]) -> Self {
-        Self(bytes)
+impl TryFrom<[u8; 2]> for CountryIso2 {
+    type Error = ();
+
+    fn try_from(bytes: [u8; 2]) -> Result<Self, Self::Error> {
+        Self::new(bytes).ok_or(())
     }
 }
 

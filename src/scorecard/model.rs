@@ -698,18 +698,23 @@ impl PlannedRoundSummary {
 /// `ScorecardPlan` contains all generated scorecard items along with round summaries and diagnostic notes.
 #[derive(Debug, Clone, Default)]
 pub struct ScorecardPlan<'a> {
-    pub items: Vec<ScorecardItem<'a>>,
+    pub(crate) items: Vec<ScorecardItem<'a>>,
     pub summaries: Vec<PlannedRoundSummary>,
     pub notes: Vec<String>,
 }
 
-impl ScorecardPlan<'_> {
+impl<'a> ScorecardPlan<'a> {
     pub fn new(notes: Vec<String>) -> Self {
         Self {
             items: Vec::new(),
             summaries: Vec::new(),
             notes,
         }
+    }
+
+    #[must_use]
+    pub fn items(&self) -> &[ScorecardItem<'a>] {
+        &self.items
     }
 
     pub fn is_empty(&self) -> bool {
