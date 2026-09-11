@@ -7,8 +7,8 @@ use rustc_hash::FxHashMap;
 
 use super::events::{ActivityCode, RoundId, WcaEvent};
 use super::model::{
-    Competitor, GroupNumber, PlannedRoundSummary, RoundNumber, ScorecardItem, ScorecardPlan,
-    TimeLimitInfo,
+    BlankScorecard, Competitor, CoverSheet, GroupNumber, PlannedRoundSummary, RoundNumber,
+    Scorecard, ScorecardItem, ScorecardPlan, TimeLimitInfo,
 };
 use crate::options::CoverSheetBy;
 use crate::wcif::{
@@ -216,6 +216,63 @@ pub fn format_competitor_name(
     (primary, local)
 }
 
+pub const SCRAMBLE_CHECKER_EXCLUDED_EVENTS: &[&str] = &["555", "666", "777", "minx"];
+
+/// Determines if a competitor scorecard should print a scramble checker box.
+pub fn should_print_scramble_checker_for_competitor(
+    person: &Person,
+    event: &Event,
+    round: &Round,
+    config: &PlanConfig<'_>,
+) -> bool {
+    if SCRAMBLE_CHECKER_EXCLUDED_EVENTS.contains(&event.id.as_str()) {
+        return false;
+    }
+    if config.scramble_checker_top_ranked {
+        let single_qualifies = person
+            .personal_bests
+            .iter()
+            .find(|pb| pb.event_id == event.id && pb.best_type == "single")
+            .and_then(|pb| pb.world_ranking)
+            .is_some_and(|wr| wr <= 50 && wr > 0);
+
+        let avg_qualifies = person
+            .personal_bests
+            .iter()
+            .find(|pb| pb.event_id == event.id && pb.best_type == "average")
+            .is_some_and(|pb| {
+                pb.world_ranking.is_some_and(|wr| wr <= 50 && wr > 0)
+                    || pb.national_ranking.is_some_and(|nr| nr <= 15 && nr > 0)
+            });
+
+        if single_qualifies || avg_qualifies {
+            return true;
+        }
+    }
+    if config.scramble_checker_final_rounds && round.is_final(event) {
+        return true;
+    }
+    false
+}
+
+/// Determines if a blank scorecard should print a scramble checker box.
+pub fn should_print_scramble_checker_for_blank(
+    event: &Event,
+    round: &Round,
+    config: &PlanConfig<'_>,
+) -> bool {
+    if SCRAMBLE_CHECKER_EXCLUDED_EVENTS.contains(&event.id.as_str()) {
+        return false;
+    }
+    if config.scramble_checker_blank {
+        return true;
+    }
+    if config.scramble_checker_final_rounds && round.is_final(event) {
+        return true;
+    }
+    false
+}
+
 struct RoundPlanningContext<'a, 'b> {
     comp: &'a Competition,
     target: &'b GenerationTarget,
@@ -223,11 +280,7 @@ struct RoundPlanningContext<'a, 'b> {
     round: &'a Round,
     attempt_count: usize,
     activity_map: &'b FxHashMap<usize, ScheduledActivityInfo<'a>>,
-    cover_sheets: bool,
-    cover_sheets_by: &'b [CoverSheetBy],
-    print_stations: bool,
-    print_one_name: bool,
-    local_names_first: bool,
+    config: &'b PlanConfig<'b>,
 }
 
 type GroupKey<'a> = (GroupNumber, Option<&'a str>);
@@ -257,7 +310,7 @@ fn collect_open_round_competitors<'a>(
             }
         };
 
-        let station_num = if ctx.print_stations {
+        let station_num = if ctx.config.print_stations {
             assigned_station
         } else {
             None
@@ -265,26 +318,38 @@ fn collect_open_round_competitors<'a>(
 
         count += 1;
         if sample_names.len() < 5 {
-            let (primary, local) =
-                format_competitor_name(&person.name, ctx.print_one_name, ctx.local_names_first);
+            let (primary, local) = format_competitor_name(
+                &person.name,
+                ctx.config.print_one_name,
+                ctx.config.local_names_first,
+            );
             sample_names.push(match local {
                 Some(loc) => format!("{primary} ({loc})"),
                 None => primary.to_owned(),
             });
         }
 
-        let competitor = Competitor::from_person(person, ctx.print_one_name, ctx.local_names_first);
-        let item = ScorecardItem::scorecard(
+        let needs_scramble_checker =
+            should_print_scramble_checker_for_competitor(person, ctx.event, ctx.round, ctx.config);
+
+        let competitor = Competitor::from_person(
+            person,
+            ctx.config.print_one_name,
+            ctx.config.local_names_first,
+        );
+        let item = Scorecard::new(
             comp_name,
             ctx.target.round_id.event,
             ctx.target.round_id.round_number,
             group_num,
-            stage_name,
             competitor,
-            station_num,
-            ctx.attempt_count,
-            time_limit_info,
-        );
+        )
+        .with_stage(stage_name)
+        .with_station(station_num)
+        .with_attempts(ctx.attempt_count)
+        .with_time_limit(time_limit_info)
+        .with_scramble_checker(needs_scramble_checker)
+        .into();
         groups
             .entry((group_num, stage_name))
             .or_default()
@@ -321,9 +386,12 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
         return;
     }
 
-    let has_round = ctx.cover_sheets && ctx.cover_sheets_by.contains(&CoverSheetBy::Round);
-    let has_group = ctx.cover_sheets && ctx.cover_sheets_by.contains(&CoverSheetBy::Group);
-    let has_stage = ctx.cover_sheets && ctx.cover_sheets_by.contains(&CoverSheetBy::Stage);
+    let has_round =
+        ctx.config.cover_sheets && ctx.config.cover_sheets_by.contains(&CoverSheetBy::Round);
+    let has_group =
+        ctx.config.cover_sheets && ctx.config.cover_sheets_by.contains(&CoverSheetBy::Group);
+    let has_stage =
+        ctx.config.cover_sheets && ctx.config.cover_sheets_by.contains(&CoverSheetBy::Stage);
 
     // Pre-calculate card counts per group (across all stages)
     let mut group_totals: FxHashMap<GroupNumber, usize> = FxHashMap::default();
@@ -333,14 +401,16 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
 
     // Tier 1 (Highest): Round cover sheet for entire round of the event
     if has_round && count > 0 {
-        plan.items.push(ScorecardItem::cover_sheet(
-            ctx.comp.display_name(),
-            ctx.target.round_id.event,
-            ctx.target.round_id.round_number,
-            0,
-            None,
-            count,
-        ));
+        plan.items.push(
+            CoverSheet::new(
+                ctx.comp.display_name(),
+                ctx.target.round_id.event,
+                ctx.target.round_id.round_number,
+                0,
+                count,
+            )
+            .into(),
+        );
     }
 
     let mut current_group = None;
@@ -354,28 +424,33 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
                 .get(&group_num)
                 .copied()
                 .unwrap_or(card_list.len());
-            plan.items.push(ScorecardItem::cover_sheet(
-                ctx.comp.display_name(),
-                ctx.target.round_id.event,
-                ctx.target.round_id.round_number,
-                group_num,
-                None,
-                group_total,
-            ));
+            plan.items.push(
+                CoverSheet::new(
+                    ctx.comp.display_name(),
+                    ctx.target.round_id.event,
+                    ctx.target.round_id.round_number,
+                    group_num,
+                    group_total,
+                )
+                .into(),
+            );
             current_group = Some(group_num);
         }
 
         // Tier 3: Stage cover sheet (per group on each stage)
         // If stage is None and group cover sheet was already emitted, avoid duplicate cover sheet
         if has_stage && (stage_name.is_some() || !has_group) {
-            plan.items.push(ScorecardItem::cover_sheet(
-                ctx.comp.display_name(),
-                ctx.target.round_id.event,
-                ctx.target.round_id.round_number,
-                group_num,
-                stage_name,
-                card_list.len(),
-            ));
+            plan.items.push(
+                CoverSheet::new(
+                    ctx.comp.display_name(),
+                    ctx.target.round_id.event,
+                    ctx.target.round_id.round_number,
+                    group_num,
+                    card_list.len(),
+                )
+                .with_stage(stage_name)
+                .into(),
+            );
         }
 
         plan.items.extend(card_list);
@@ -403,57 +478,70 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
     let time_limit_info =
         TimeLimitInfo::from_wcif(ctx.round.time_limit.as_ref(), ctx.round.cutoff.as_ref());
 
-    if ctx.cover_sheets && adv_result.blank_count > 0 {
-        let has_round = ctx.cover_sheets_by.contains(&CoverSheetBy::Round);
-        let has_group = ctx.cover_sheets_by.contains(&CoverSheetBy::Group);
-        let has_stage = ctx.cover_sheets_by.contains(&CoverSheetBy::Stage);
+    if ctx.config.cover_sheets && adv_result.blank_count > 0 {
+        let has_round = ctx.config.cover_sheets_by.contains(&CoverSheetBy::Round);
+        let has_group = ctx.config.cover_sheets_by.contains(&CoverSheetBy::Group);
+        let has_stage = ctx.config.cover_sheets_by.contains(&CoverSheetBy::Stage);
 
         // Tier 1 (Highest): Round cover sheet
         if has_round {
-            plan.items.push(ScorecardItem::cover_sheet(
-                comp_name,
-                ctx.target.round_id.event,
-                ctx.target.round_id.round_number,
-                0,
-                None,
-                adv_result.blank_count,
-            ));
+            plan.items.push(
+                CoverSheet::new(
+                    comp_name,
+                    ctx.target.round_id.event,
+                    ctx.target.round_id.round_number,
+                    0,
+                    adv_result.blank_count,
+                )
+                .into(),
+            );
         }
 
         // Tier 2: Group cover sheet
         if has_group {
-            plan.items.push(ScorecardItem::cover_sheet(
-                comp_name,
-                ctx.target.round_id.event,
-                ctx.target.round_id.round_number,
-                1,
-                None,
-                adv_result.blank_count,
-            ));
+            plan.items.push(
+                CoverSheet::new(
+                    comp_name,
+                    ctx.target.round_id.event,
+                    ctx.target.round_id.round_number,
+                    1,
+                    adv_result.blank_count,
+                )
+                .into(),
+            );
         }
 
         // Tier 3: Stage cover sheet (per group on each stage)
         if has_stage && (round_stage.is_some() || !has_group) {
-            plan.items.push(ScorecardItem::cover_sheet(
+            plan.items.push(
+                CoverSheet::new(
+                    comp_name,
+                    ctx.target.round_id.event,
+                    ctx.target.round_id.round_number,
+                    1,
+                    adv_result.blank_count,
+                )
+                .with_stage(round_stage)
+                .into(),
+            );
+        }
+    }
+
+    let needs_scramble_checker =
+        should_print_scramble_checker_for_blank(ctx.event, ctx.round, ctx.config);
+
+    plan.items.extend((0..adv_result.blank_count).map(|_| {
+        ScorecardItem::Blank(
+            BlankScorecard::new(
                 comp_name,
                 ctx.target.round_id.event,
                 ctx.target.round_id.round_number,
                 1,
-                round_stage,
-                adv_result.blank_count,
-            ));
-        }
-    }
-
-    plan.items.extend((0..adv_result.blank_count).map(|_| {
-        ScorecardItem::blank(
-            comp_name,
-            ctx.target.round_id.event,
-            ctx.target.round_id.round_number,
-            1,
-            round_stage,
-            ctx.attempt_count,
-            time_limit_info,
+            )
+            .with_stage(round_stage)
+            .with_attempts(ctx.attempt_count)
+            .with_time_limit(time_limit_info)
+            .with_scramble_checker(needs_scramble_checker),
         )
     }));
 
@@ -465,13 +553,66 @@ fn plan_subsequent_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut Scor
     });
 }
 
-#[derive(Debug, Clone, Copy)]
-struct PlanConfig<'a> {
-    cover_sheets: bool,
-    cover_sheets_by: &'a [CoverSheetBy],
-    print_stations: bool,
-    print_one_name: bool,
-    local_names_first: bool,
+/// Configuration options for planning scorecards.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlanConfig<'a> {
+    pub cover_sheets: bool,
+    pub cover_sheets_by: &'a [CoverSheetBy],
+    pub print_stations: bool,
+    pub print_one_name: bool,
+    pub local_names_first: bool,
+    pub scramble_checker_top_ranked: bool,
+    pub scramble_checker_final_rounds: bool,
+    pub scramble_checker_blank: bool,
+}
+
+#[cfg(test)]
+impl<'a> PlanConfig<'a> {
+    pub fn new(
+        cover_sheets: bool,
+        cover_sheets_by: &'a [CoverSheetBy],
+        print_stations: bool,
+        print_one_name: bool,
+        local_names_first: bool,
+    ) -> Self {
+        Self {
+            cover_sheets,
+            cover_sheets_by,
+            print_stations,
+            print_one_name,
+            local_names_first,
+            scramble_checker_top_ranked: false,
+            scramble_checker_final_rounds: false,
+            scramble_checker_blank: false,
+        }
+    }
+
+    pub fn with_scramble_checker(
+        mut self,
+        top_ranked: bool,
+        final_rounds: bool,
+        blank: bool,
+    ) -> Self {
+        self.scramble_checker_top_ranked = top_ranked;
+        self.scramble_checker_final_rounds = final_rounds;
+        self.scramble_checker_blank = blank;
+        self
+    }
+}
+
+impl<'a> From<&'a crate::options::ResolvedOptions> for PlanConfig<'a> {
+    fn from(opts: &'a crate::options::ResolvedOptions) -> Self {
+        Self {
+            cover_sheets: opts.cover_sheets,
+            cover_sheets_by: &opts.cover_sheets_by,
+            print_stations: opts.print_stations,
+            print_one_name: opts.print_one_name,
+            local_names_first: opts.local_names_first,
+            scramble_checker_top_ranked: opts.scramble_checker_top_ranked,
+            scramble_checker_final_rounds: opts.scramble_checker_final_rounds,
+            scramble_checker_blank: opts.scramble_checker_blank,
+        }
+    }
 }
 
 /// Planner responsible for extracting competitor assignments, calculating advancement blanks, and sequencing scorecards.
@@ -560,26 +701,15 @@ impl ScorecardPlanner {
         (targets, notes)
     }
 
-    /// Plans and builds all required scorecards for the competition given the requested events, cover sheet option, `print_stations`, `print_one_name`, and `local_names_first` flag.
+    /// Plans and builds all required scorecards for the competition with the given configuration.
     pub fn plan<'a, S: AsRef<str>>(
         comp: &'a Competition,
         requested_events: &[S],
-        cover_sheets: bool,
-        cover_sheets_by: &[CoverSheetBy],
-        print_stations: bool,
-        print_one_name: bool,
-        local_names_first: bool,
+        config: PlanConfig<'_>,
     ) -> Result<ScorecardPlan<'a>, PlannerError> {
         let (targets, notes) = Self::resolve_targets(comp, requested_events);
         let activity_map = comp.build_activity_schedule_map();
         let mut plan = ScorecardPlan::new(notes);
-        let config = PlanConfig {
-            cover_sheets,
-            cover_sheets_by,
-            print_stations,
-            print_one_name,
-            local_names_first,
-        };
 
         for target in &targets {
             Self::plan_target_round(comp, target, &activity_map, config, &mut plan)?;
@@ -587,6 +717,15 @@ impl ScorecardPlanner {
 
         plan.assign_numbers();
         Ok(plan)
+    }
+
+    /// Convenience wrapper to plan scorecards directly from [`ResolvedOptions`].
+    pub fn plan_with_options<'a, S: AsRef<str>>(
+        comp: &'a Competition,
+        requested_events: &[S],
+        opts: &crate::options::ResolvedOptions,
+    ) -> Result<ScorecardPlan<'a>, PlannerError> {
+        Self::plan(comp, requested_events, PlanConfig::from(opts))
     }
 
     fn plan_target_round<'a>(
@@ -606,11 +745,7 @@ impl ScorecardPlanner {
             round,
             attempt_count,
             activity_map,
-            cover_sheets: config.cover_sheets,
-            cover_sheets_by: config.cover_sheets_by,
-            print_stations: config.print_stations,
-            print_one_name: config.print_one_name,
-            local_names_first: config.local_names_first,
+            config: &config,
         };
 
         if target.is_open_round {

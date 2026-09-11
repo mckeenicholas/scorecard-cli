@@ -251,32 +251,26 @@ impl PdfGenerator {
 mod tests {
     use super::*;
     use crate::pdf::layout::PaperSize;
-    use crate::scorecard::WcaEvent;
+    use crate::scorecard::{Scorecard, WcaEvent};
 
     #[test]
     fn test_pad_groups_to_page_boundaries_uneven_groups() {
-        let group1_card = ScorecardItem::scorecard(
+        let group1_card = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             1,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
-        let group2_card = ScorecardItem::scorecard(
+        )
+        .into();
+        let group2_card = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             2,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
+        )
+        .into();
 
         // Group 1 has 3 cards, Group 2 has 2 cards.
         let cards = vec![
@@ -309,28 +303,22 @@ mod tests {
 
     #[test]
     fn test_pad_groups_to_page_boundaries_exact_multiple() {
-        let g1 = ScorecardItem::scorecard(
+        let g1 = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             1,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
-        let g2 = ScorecardItem::scorecard(
+        )
+        .into();
+        let g2 = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             2,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
+        )
+        .into();
 
         // Group 1 has exactly 4 cards (1 full page)
         let cards = vec![g1, g1, g1, g1, g2];
@@ -343,28 +331,22 @@ mod tests {
 
     #[test]
     fn test_pad_groups_to_page_boundaries_single_card_per_page() {
-        let g1 = ScorecardItem::scorecard(
+        let g1 = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             1,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
-        let g2 = ScorecardItem::scorecard(
+        )
+        .into();
+        let g2 = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             2,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
+        )
+        .into();
 
         let cards = vec![g1, g2];
         let padded = PdfGenerator::pad_groups_to_page_boundaries(&cards, 1);
@@ -378,28 +360,22 @@ mod tests {
         let pdf_gen = PdfGenerator::with_options(layout, PageFormat::Group, true, None);
         assert!(pdf_gen.start_group_on_new_page);
 
-        let g1 = ScorecardItem::scorecard(
+        let g1 = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             1,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
-        let g2 = ScorecardItem::scorecard(
+        )
+        .into();
+        let g2 = Scorecard::new(
             "Test Comp",
             WcaEvent::E333,
             1,
             2,
-            None,
             crate::scorecard::Competitor::simple("Alice"),
-            None,
-            5,
-            None,
-        );
+        )
+        .into();
 
         // G1 has 2 cards, G2 has 2 cards. On 4-card layout without padding = 1 page.
         // With start_group_on_new_page = 2 pages (G1 on page 1 with 2 blanks, G2 on page 2).
@@ -413,7 +389,7 @@ mod tests {
         use std::path::Path;
 
         use crate::options::CoverSheetBy;
-        use crate::scorecard::ScorecardPlanner;
+        use crate::scorecard::{PlanConfig, ScorecardPlanner};
         use crate::wcif::loader::WcifLoader;
 
         let comp = match WcifLoader::load_from_file(Path::new("BramptonSummer.json")) {
@@ -425,11 +401,7 @@ mod tests {
         let plan = ScorecardPlanner::plan(
             &comp,
             &["333-r1"],
-            true,
-            &[CoverSheetBy::Stage],
-            true,
-            false,
-            false,
+            PlanConfig::new(true, &[CoverSheetBy::Stage], true, false, false),
         )
         .unwrap();
         let layout = PageLayout::new(PaperSize::A4);

@@ -103,8 +103,8 @@ mod tests {
     #[test]
     fn test_round_attempt_counts() {
         let make_round = |fmt: &str| Round {
-            id: "333-r1".to_string(),
-            format: Some(fmt.to_string()),
+            id: "333-r1".to_owned(),
+            format: Some(fmt.to_owned()),
             time_limit: None,
             cutoff: None,
             advancement_condition: None,

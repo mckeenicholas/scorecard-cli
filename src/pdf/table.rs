@@ -62,7 +62,7 @@ impl TableDrawer {
         Self::draw_header_background(ops, &spec, top_y, theme);
         Self::draw_header_text(ops, &spec, top_y, theme);
         Self::draw_row_cells(ops, &spec, top_y, theme);
-        Self::draw_grid_lines(ops, &spec, top_y, bottom_y, total_h, theme);
+        Self::draw_grid_lines(ops, &spec, top_y, bottom_y, theme);
 
         *cur_y = bottom_y;
     }
@@ -151,11 +151,10 @@ impl TableDrawer {
         spec: &TableSpec<'_>,
         top_y: f32,
         bottom_y: f32,
-        total_h: f32,
         theme: &ScorecardTheme,
     ) {
         Self::set_grid_stroke_style(ops, theme);
-        Self::draw_outer_table_border(ops, spec, bottom_y, total_h);
+        Self::draw_outer_table_border(ops, spec, bottom_y, top_y - bottom_y);
         Self::draw_horizontal_dividers(ops, spec, top_y);
         Self::draw_vertical_dividers(ops, spec, top_y, bottom_y);
     }

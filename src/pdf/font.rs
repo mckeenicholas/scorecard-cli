@@ -107,22 +107,19 @@ mod tests {
         let mut ops = Vec::new();
         crate::pdf::renderer::ScorecardRenderer::draw_card(
             &mut ops,
-            &crate::scorecard::ScorecardItem::scorecard(
+            &crate::scorecard::Scorecard::new(
                 "CJK Open 2026",
                 crate::scorecard::WcaEvent::E333,
                 1,
                 1,
-                None,
                 crate::scorecard::Competitor {
                     name: "Zhang San",
                     local_name: Some("张三"),
                     registrant_id: std::num::NonZeroUsize::MIN,
                     wca_id: crate::wcif::WcaId::parse("2026ZHAN01"),
                 },
-                None,
-                5,
-                None,
-            ),
+            )
+            .into(),
             crate::pdf::layout::RectSpec::new(18.0, 18.0, 270.0, 380.0),
             Some(&font_id),
         );

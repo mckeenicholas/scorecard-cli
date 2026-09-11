@@ -2,43 +2,44 @@ use std::num::NonZeroUsize;
 
 use crate::scorecard::events::WcaEvent;
 use crate::scorecard::model::{
-    Competitor, InvalidWcaResult, PlannedRoundSummary, ScorecardItem, ScorecardPlan, TimeLimitInfo,
-    WcaResult,
+    Competitor, InvalidWcaResult, PlannedRoundSummary, Scorecard, ScorecardItem, ScorecardPlan,
+    TimeLimitInfo, WcaResult,
 };
 use crate::scorecard::planner;
 use crate::wcif::{Cutoff, TimeLimit, WcaId};
 
 #[test]
 fn test_scorecard_item_display_methods() {
-    let item = ScorecardItem::scorecard(
+    let item = Scorecard::new(
         "Very Long Competition Name 2026",
         WcaEvent::E333,
         1,
         1,
-        Some("Red Stage"),
         Competitor {
             name: "Alice Smith",
             local_name: None,
             registrant_id: NonZeroUsize::new(10).unwrap(),
             wca_id: WcaId::parse("2022SMIT01"),
         },
-        Some(7),
-        5,
-        Some(TimeLimitInfo {
-            limit_centiseconds: WcaResult::new(30000),
-            is_cumulative: false,
-            cutoff_centiseconds: WcaResult::new(6000),
-            cutoff_attempts: 2,
-        }),
-    );
+    )
+    .with_stage(Some("Red Stage"))
+    .with_station(Some(7))
+    .with_time_limit(Some(TimeLimitInfo {
+        limit_centiseconds: WcaResult::new(30000),
+        is_cumulative: false,
+        cutoff_centiseconds: WcaResult::new(6000),
+        cutoff_attempts: 2,
+    }))
+    .into();
 
     if let ScorecardItem::Scorecard(sc) = &item {
         assert_eq!(sc.competitor.display_name(), ("Alice Smith", None));
         assert_eq!(sc.competitor.display_wca_id(), "2022SMIT01");
         assert_eq!(sc.truncated_competition_name(20), "Very Long Competi...");
+        assert!(!sc.needs_scramble_checker);
         assert_eq!(
             sc.formatted_time_limit_info(),
-            Some("Cutoff: < 1:00.00 (2 att)  |  Time limit: 5:00.00".to_string())
+            Some("Cutoff: < 1:00.00 (2 att)  |  Time limit: 5:00.00".to_owned())
         );
     } else {
         panic!("Expected Scorecard");
@@ -68,7 +69,7 @@ fn test_time_limit_info_from_wcif_and_format() {
 
     let tl_cum = TimeLimit {
         centiseconds: 30000,
-        cumulative_round_ids: Some(vec!["333bf-r1".to_string()]),
+        cumulative_round_ids: Some(vec!["333bf-r1".to_owned()]),
     };
     let info_cum = TimeLimitInfo::from_wcif(Some(&tl_cum), None).unwrap();
     assert!(info_cum.is_cumulative);
@@ -130,7 +131,7 @@ fn test_wca_result_display_and_helpers() {
 
     assert_eq!(
         TimeLimitInfo::format_centiseconds(9050),
-        Some("1:30.50".to_string())
+        Some("1:30.50".to_owned())
     );
     assert_eq!(TimeLimitInfo::format_centiseconds(0), None);
     assert_eq!(TimeLimitInfo::format_centiseconds(-1), None);
@@ -146,16 +147,16 @@ fn test_scorecard_plan_summary_formatting() {
                 event: WcaEvent::E333,
                 round_number: 1,
                 competitor_count: 2,
-                sample_competitor_names: vec!["Alice".to_string(), "Bob".to_string()],
+                sample_competitor_names: vec!["Alice".to_owned(), "Bob".to_owned()],
             },
             PlannedRoundSummary::SubsequentRound {
                 event: WcaEvent::E333,
                 round_number: 2,
                 blank_count: 16,
-                reason: "top 16 ranking".to_string(),
+                reason: "top 16 ranking".to_owned(),
             },
         ],
-        notes: vec!["Skipped '333fm'".to_string()],
+        notes: vec!["Skipped '333fm'".to_owned()],
     };
 
     let formatted = plan.format_summary();

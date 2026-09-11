@@ -4,12 +4,21 @@ use crate::pdf::table::ColumnDef;
 use crate::pdf::text::TextAlign;
 use crate::scorecard::TimeLimitInfo;
 
-pub const ATTEMPT_COLUMNS: [ColumnDef<'static>; 5] = [
+pub const ATTEMPT_COLUMNS_5: [ColumnDef<'static>; 5] = [
     ColumnDef::new("Attempt", 0.16, TextAlign::Center),
     ColumnDef::new("Scr", 0.15, TextAlign::Center),
     ColumnDef::new("Result", 0.39, TextAlign::Center),
     ColumnDef::new("Judge", 0.15, TextAlign::Center),
     ColumnDef::new("Comp", 0.15, TextAlign::Center),
+];
+
+pub const ATTEMPT_COLUMNS_6: [ColumnDef<'static>; 6] = [
+    ColumnDef::new("Attempt", 0.14, TextAlign::Center),
+    ColumnDef::new("Scr", 0.13, TextAlign::Center),
+    ColumnDef::new("Check", 0.13, TextAlign::Center),
+    ColumnDef::new("Result", 0.34, TextAlign::Center),
+    ColumnDef::new("Judge", 0.13, TextAlign::Center),
+    ColumnDef::new("Comp", 0.13, TextAlign::Center),
 ];
 
 /// Standard labels for regular attempt solve rows (avoids per-card integer-to-string allocations).
@@ -23,8 +32,10 @@ pub struct AttemptTableSpec {
     pub cutoff_banner: Option<String>,
     pub row_h: f32,
     pub total_table_h: f32,
-    pub col_widths: [f32; 5],
+    pub col_widths: [f32; 6],
+    pub col_count: usize,
     pub footer_text: Option<String>,
+    pub has_checker: bool,
 }
 
 impl AttemptTableSpec {
@@ -32,11 +43,26 @@ impl AttemptTableSpec {
     pub const BANNER_H: f32 = 10.5;
     pub const BASE_ATTEMPT_ROWS: f32 = 6.0;
 
+    #[inline]
+    pub fn columns(&self) -> &'static [ColumnDef<'static>] {
+        if self.has_checker {
+            &ATTEMPT_COLUMNS_6
+        } else {
+            &ATTEMPT_COLUMNS_5
+        }
+    }
+
+    #[inline]
+    pub fn active_col_widths(&self) -> &[f32] {
+        &self.col_widths[..self.col_count]
+    }
+
     pub fn build(
         inner_w: f32,
         available_h: f32,
         attempt_count: usize,
         time_limit_info: Option<TimeLimitInfo>,
+        has_checker: bool,
     ) -> Self {
         let has_cutoff = time_limit_info
             .is_some_and(|info| info.cutoff_centiseconds.is_some() && info.cutoff_attempts > 0);
@@ -88,7 +114,16 @@ impl AttemptTableSpec {
         let total_table_h =
             Self::HEADER_H + (total_attempts * row_h) + (total_banners * Self::BANNER_H);
 
-        let col_widths = ATTEMPT_COLUMNS.map(|col| inner_w * col.ratio);
+        let cols: &'static [ColumnDef<'static>] = if has_checker {
+            &ATTEMPT_COLUMNS_6
+        } else {
+            &ATTEMPT_COLUMNS_5
+        };
+
+        let mut col_widths = [0.0; 6];
+        for (i, col) in cols.iter().enumerate() {
+            col_widths[i] = inner_w * col.ratio;
+        }
 
         Self {
             attempt_count,
@@ -97,7 +132,9 @@ impl AttemptTableSpec {
             row_h,
             total_table_h,
             col_widths,
+            col_count: cols.len(),
             footer_text,
+            has_checker,
         }
     }
 }

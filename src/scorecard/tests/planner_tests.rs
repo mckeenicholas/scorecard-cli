@@ -2,60 +2,43 @@ use std::num::NonZeroUsize;
 
 use crate::options::CoverSheetBy;
 use crate::scorecard::events::{RoundId, WcaEvent};
-use crate::scorecard::model::{Competitor, ScorecardItem, WcaResult};
-use crate::scorecard::planner::{self, ScorecardPlanner};
+use crate::scorecard::model::{Competitor, Scorecard, ScorecardItem, WcaResult};
+use crate::scorecard::planner::{self, PlanConfig, ScorecardPlanner};
 use crate::wcif::model::{
-    Activity, AdvancementCondition, Assignment, CountryIso2, Person, Registration, Room, Schedule,
-    Venue,
+    Activity, AdvancementCondition, Assignment, CountryIso2, Person, PersonalBest, Registration,
+    Room, Schedule, Venue,
 };
 use crate::wcif::{Competition, Cutoff, Event, Round, TimeLimit, WcaId};
 
 #[test]
 fn test_sort_group_cards_station_and_name() {
-    let card1 = ScorecardItem::scorecard(
+    let card1 = Scorecard::new(
         "Test Comp",
         WcaEvent::E333,
         1,
         1,
-        None,
         Competitor::simple("Zack"),
-        Some(2),
-        5,
-        None,
-    );
-    let card2 = ScorecardItem::scorecard(
+    )
+    .with_station(Some(2))
+    .into();
+    let card2 = Scorecard::new(
         "Test Comp",
         WcaEvent::E333,
         1,
         1,
-        None,
         Competitor::simple("Alice"),
-        Some(1),
-        5,
-        None,
-    );
-    let card3 = ScorecardItem::scorecard(
+    )
+    .with_station(Some(1))
+    .into();
+    let card3 = Scorecard::new(
         "Test Comp",
         WcaEvent::E333,
         1,
         1,
-        None,
         Competitor::simple("Charlie"),
-        None,
-        5,
-        None,
-    );
-    let card4 = ScorecardItem::scorecard(
-        "Test Comp",
-        WcaEvent::E333,
-        1,
-        1,
-        None,
-        Competitor::simple("Bob"),
-        None,
-        5,
-        None,
-    );
+    )
+    .into();
+    let card4 = Scorecard::new("Test Comp", WcaEvent::E333, 1, 1, Competitor::simple("Bob")).into();
 
     let mut cards = vec![card1, card2, card3, card4];
     planner::sort_group_cards(&mut cards);
@@ -81,17 +64,17 @@ fn test_sort_group_cards_station_and_name() {
 #[test]
 fn test_resolve_targets_omits_333fm() {
     let comp = Competition {
-        format_version: Some("1.0".to_string()),
-        id: "TestComp".to_string(),
-        name: "Test Competition 2026".to_string(),
+        format_version: Some("1.0".to_owned()),
+        id: "TestComp".to_owned(),
+        name: "Test Competition 2026".to_owned(),
         short_name: None,
         persons: vec![],
         events: vec![
             Event {
-                id: "333".to_string(),
+                id: "333".to_owned(),
                 rounds: vec![Round {
-                    id: "333-r1".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r1".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: None,
@@ -101,10 +84,10 @@ fn test_resolve_targets_omits_333fm() {
                 qualification: None,
             },
             Event {
-                id: "333fm".to_string(),
+                id: "333fm".to_owned(),
                 rounds: vec![Round {
-                    id: "333fm-r1".to_string(),
-                    format: Some("m".to_string()),
+                    id: "333fm-r1".to_owned(),
+                    format: Some("m".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: None,
@@ -133,76 +116,78 @@ fn test_resolve_targets_omits_333fm() {
 #[test]
 fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
     let comp = Competition {
-        format_version: Some("1.0".to_string()),
-        id: "CompWithR2".to_string(),
-        name: "Comp With Round 2".to_string(),
+        format_version: Some("1.0".to_owned()),
+        id: "CompWithR2".to_owned(),
+        name: "Comp With Round 2".to_owned(),
         short_name: None,
         persons: vec![
             Person {
                 registrant_id: NonZeroUsize::new(1),
-                name: "Alice Smith".to_string(),
+                name: "Alice Smith".to_owned(),
                 wca_id: WcaId::parse("2022SMIT01"),
                 country_iso2: CountryIso2::parse("US"),
                 registration: Some(Registration {
                     id: NonZeroUsize::new(1),
-                    status: Some("accepted".to_string()),
-                    event_ids: vec!["333".to_string(), "222".to_string()],
+                    status: Some("accepted".to_owned()),
+                    event_ids: vec!["333".to_owned(), "222".to_owned()],
                     is_competing: true,
                 }),
                 assignments: vec![
                     Assignment {
                         activity_id: 101, // 333-r1-g1
                         station_number: Some(1),
-                        code: Some("competitor".to_string()),
+                        code: Some("competitor".to_owned()),
                     },
                     Assignment {
                         activity_id: 102, // 333-r2-g1 (Alice advanced to R2!)
                         station_number: Some(5),
-                        code: Some("competitor".to_string()),
+                        code: Some("competitor".to_owned()),
                     },
                     Assignment {
                         activity_id: 201, // 222-r1-g1
                         station_number: Some(2),
-                        code: Some("competitor".to_string()),
+                        code: Some("competitor".to_owned()),
                     },
                 ],
+                personal_bests: vec![],
             },
             Person {
                 registrant_id: NonZeroUsize::new(2),
-                name: "Bob Jones".to_string(),
+                name: "Bob Jones".to_owned(),
                 wca_id: WcaId::parse("2021JONE01"),
                 country_iso2: CountryIso2::parse("US"),
                 registration: Some(Registration {
                     id: NonZeroUsize::new(2),
-                    status: Some("accepted".to_string()),
-                    event_ids: vec!["333".to_string()],
+                    status: Some("accepted".to_owned()),
+                    event_ids: vec!["333".to_owned()],
                     is_competing: true,
                 }),
                 assignments: vec![
                     Assignment {
                         activity_id: 101, // 333-r1-g1
                         station_number: Some(2),
-                        code: Some("competitor".to_string()),
+                        code: Some("competitor".to_owned()),
                     },
                     // Bob did not advance to 333-r2!
                 ],
+                personal_bests: vec![],
             },
         ],
         events: vec![
             Event {
-                id: "333".to_string(),
+                id: "333".to_owned(),
                 rounds: vec![
                     Round {
-                        id: "333-r1".to_string(),
-                        format: Some("a".to_string()),
+                        id: "333-r1".to_owned(),
+                        format: Some("a".to_owned()),
                         time_limit: None,
                         cutoff: None,
                         advancement_condition: None,
                         scramble_group_count: 1,
                     },
                     Round {
-                        id: "333-r2".to_string(),
-                        format: Some("a".to_string()),
+                        id: "333-r2".to_owned(),
+                        format: Some("a".to_owned()),
                         time_limit: None,
                         cutoff: None,
                         advancement_condition: None,
@@ -213,19 +198,19 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
                 qualification: None,
             },
             Event {
-                id: "222".to_string(),
+                id: "222".to_owned(),
                 rounds: vec![
                     Round {
-                        id: "222-r1".to_string(),
-                        format: Some("a".to_string()),
+                        id: "222-r1".to_owned(),
+                        format: Some("a".to_owned()),
                         time_limit: None,
                         cutoff: None,
                         advancement_condition: None,
                         scramble_group_count: 1,
                     },
                     Round {
-                        id: "222-r2".to_string(),
-                        format: Some("a".to_string()),
+                        id: "222-r2".to_owned(),
+                        format: Some("a".to_owned()),
                         time_limit: None,
                         cutoff: None,
                         advancement_condition: None,
@@ -241,16 +226,16 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
             number_of_days: None,
             venues: vec![Venue {
                 id: Some(1),
-                name: Some("Main Venue".to_string()),
+                name: Some("Main Venue".to_owned()),
                 rooms: vec![Room {
                     id: Some(1),
-                    name: Some("Main Stage".to_string()),
+                    name: Some("Main Stage".to_owned()),
                     color: None,
                     activities: vec![
                         Activity {
                             id: 101,
-                            name: "3x3x3 Round 1 Group 1".to_string(),
-                            code: "333-r1-g1".to_string(),
+                            name: "3x3x3 Round 1 Group 1".to_owned(),
+                            code: "333-r1-g1".to_owned(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![],
@@ -258,8 +243,8 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
                         },
                         Activity {
                             id: 102,
-                            name: "3x3x3 Round 2 Group 1".to_string(),
-                            code: "333-r2-g1".to_string(),
+                            name: "3x3x3 Round 2 Group 1".to_owned(),
+                            code: "333-r2-g1".to_owned(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![],
@@ -267,8 +252,8 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
                         },
                         Activity {
                             id: 201,
-                            name: "2x2x2 Round 1 Group 1".to_string(),
-                            code: "222-r1-g1".to_string(),
+                            name: "2x2x2 Round 1 Group 1".to_owned(),
+                            code: "222-r1-g1".to_owned(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![],
@@ -293,8 +278,12 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
     assert_eq!(targets_all[2].round_id, RoundId::new(WcaEvent::E222, 1));
 
     // 2. Planning 333-r2 produces a NAMED scorecard for Alice (and NOT Bob):
-    let plan_r2 =
-        ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false, false).unwrap();
+    let plan_r2 = ScorecardPlanner::plan(
+        &comp,
+        &["333-r2"],
+        PlanConfig::new(false, &[], true, false, false),
+    )
+    .unwrap();
     assert_eq!(plan_r2.len(), 1);
     let alice_r2 = &plan_r2[0];
     if let ScorecardItem::Scorecard(alice) = alice_r2 {
@@ -306,8 +295,12 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
     }
 
     // 3. Planning 222-r2 explicitly (no assignments) produces blank scorecards:
-    let plan_222_r2 =
-        ScorecardPlanner::plan(&comp, &["222-r2"], false, &[], true, false, false).unwrap();
+    let plan_222_r2 = ScorecardPlanner::plan(
+        &comp,
+        &["222-r2"],
+        PlanConfig::new(false, &[], true, false, false),
+    )
+    .unwrap();
     assert!(!plan_222_r2.is_empty());
     assert!(plan_222_r2[0].is_blank());
 }
@@ -315,48 +308,50 @@ fn test_resolve_targets_and_planning_with_subsequent_round_assignments() {
 #[test]
 fn test_scorecard_planner_full_pipeline() {
     let comp = Competition {
-        format_version: Some("1.0".to_string()),
-        id: "TestComp".to_string(),
-        name: "Test Competition 2026".to_string(),
-        short_name: Some("Test Comp".to_string()),
+        format_version: Some("1.0".to_owned()),
+        id: "TestComp".to_owned(),
+        name: "Test Competition 2026".to_owned(),
+        short_name: Some("Test Comp".to_owned()),
         persons: vec![
             Person {
                 registrant_id: NonZeroUsize::new(1),
-                name: "Alice Smith".to_string(),
+                name: "Alice Smith".to_owned(),
                 wca_id: WcaId::parse("2022SMIT01"),
                 country_iso2: None,
                 registration: Some(Registration {
                     id: NonZeroUsize::new(1),
-                    event_ids: vec!["333".to_string()],
-                    status: Some("accepted".to_string()),
+                    event_ids: vec!["333".to_owned()],
+                    status: Some("accepted".to_owned()),
                     is_competing: true,
                 }),
                 assignments: vec![Assignment {
                     activity_id: 1011,
                     station_number: Some(5),
-                    code: Some("competitor".to_string()),
+                    code: Some("competitor".to_owned()),
                 }],
+                personal_bests: vec![],
             },
             Person {
                 registrant_id: NonZeroUsize::new(2),
-                name: "Bob Jones".to_string(),
+                name: "Bob Jones".to_owned(),
                 wca_id: None,
                 country_iso2: None,
                 registration: Some(Registration {
                     id: NonZeroUsize::new(2),
-                    event_ids: vec!["333".to_string()],
-                    status: Some("pending".to_string()), // Not accepted!
+                    event_ids: vec!["333".to_owned()],
+                    status: Some("pending".to_owned()), // Not accepted!
                     is_competing: true,
                 }),
                 assignments: vec![],
+                personal_bests: vec![],
             },
         ],
         events: vec![Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![
                 Round {
-                    id: "333-r1".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r1".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: Some(TimeLimit {
                         centiseconds: 60000,
                         cumulative_round_ids: None,
@@ -366,14 +361,14 @@ fn test_scorecard_planner_full_pipeline() {
                         attempt_result: 4500,
                     }),
                     advancement_condition: Some(AdvancementCondition {
-                        condition_type: "ranking".to_string(),
+                        condition_type: "ranking".to_owned(),
                         value: Some(1),
                     }),
                     scramble_group_count: 1,
                 },
                 Round {
-                    id: "333-r2".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r2".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: Some(TimeLimit {
                         centiseconds: 60000,
                         cumulative_round_ids: None,
@@ -387,25 +382,25 @@ fn test_scorecard_planner_full_pipeline() {
             qualification: None,
         }],
         schedule: Some(Schedule {
-            start_date: Some("2026-06-01".to_string()),
+            start_date: Some("2026-06-01".to_owned()),
             number_of_days: Some(1),
             venues: vec![Venue {
                 id: Some(1),
-                name: Some("Main Venue".to_string()),
+                name: Some("Main Venue".to_owned()),
                 rooms: vec![Room {
                     id: Some(10),
-                    name: Some("Red Stage".to_string()),
+                    name: Some("Red Stage".to_owned()),
                     color: None,
                     activities: vec![Activity {
                         id: 101,
-                        name: "3x3x3 Round 1".to_string(),
-                        code: "333-r1".to_string(),
+                        name: "3x3x3 Round 1".to_owned(),
+                        code: "333-r1".to_owned(),
                         start_time: None,
                         end_time: None,
                         child_activities: vec![Activity {
                             id: 1011,
-                            name: "3x3x3 Round 1 Group 1".to_string(),
-                            code: "333-r1-g1".to_string(),
+                            name: "3x3x3 Round 1 Group 1".to_owned(),
+                            code: "333-r1-g1".to_owned(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![],
@@ -420,8 +415,12 @@ fn test_scorecard_planner_full_pipeline() {
     };
 
     // Plan Round 1
-    let cards_r1 =
-        ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], true, false, false).unwrap();
+    let cards_r1 = ScorecardPlanner::plan(
+        &comp,
+        &["333-r1"],
+        PlanConfig::new(false, &[], true, false, false),
+    )
+    .unwrap();
     assert_eq!(cards_r1.len(), 1);
     let card1 = &cards_r1[0];
     if let ScorecardItem::Scorecard(sc) = card1 {
@@ -449,8 +448,12 @@ fn test_scorecard_planner_full_pipeline() {
     assert!(!card1.is_cover_sheet());
 
     // Plan Round 2 (advancement blanks)
-    let cards_r2 =
-        ScorecardPlanner::plan(&comp, &["333-r2"], false, &[], true, false, false).unwrap();
+    let cards_r2 = ScorecardPlanner::plan(
+        &comp,
+        &["333-r2"],
+        PlanConfig::new(false, &[], true, false, false),
+    )
+    .unwrap();
     assert_eq!(cards_r2.len(), 1);
     let blank_card = &cards_r2[0];
     if let ScorecardItem::Blank(blank) = blank_card {
@@ -466,51 +469,53 @@ fn test_scorecard_planner_full_pipeline() {
 #[test]
 fn test_planner_with_cover_sheets() {
     let comp = Competition {
-        format_version: Some("1.0".to_string()),
-        id: "OceanState2025".to_string(),
-        name: "Ocean State Cubikon 2025".to_string(),
+        format_version: Some("1.0".to_owned()),
+        id: "OceanState2025".to_owned(),
+        name: "Ocean State Cubikon 2025".to_owned(),
         short_name: None,
         persons: vec![
             Person {
                 registrant_id: NonZeroUsize::new(1),
-                name: "Alice Smith".to_string(),
+                name: "Alice Smith".to_owned(),
                 wca_id: WcaId::parse("2022SMIT01"),
                 country_iso2: CountryIso2::parse("US"),
                 registration: Some(Registration {
                     id: NonZeroUsize::new(1),
-                    status: Some("accepted".to_string()),
-                    event_ids: vec!["333".to_string()],
+                    status: Some("accepted".to_owned()),
+                    event_ids: vec!["333".to_owned()],
                     is_competing: true,
                 }),
                 assignments: vec![Assignment {
                     activity_id: 1011,
-                    code: Some("competitor".to_string()),
+                    code: Some("competitor".to_owned()),
                     station_number: Some(1),
                 }],
+                personal_bests: vec![],
             },
             Person {
                 registrant_id: NonZeroUsize::new(2),
-                name: "Bob Jones".to_string(),
+                name: "Bob Jones".to_owned(),
                 wca_id: None,
                 country_iso2: CountryIso2::parse("US"),
                 registration: Some(Registration {
                     id: NonZeroUsize::new(2),
-                    status: Some("accepted".to_string()),
-                    event_ids: vec!["333".to_string()],
+                    status: Some("accepted".to_owned()),
+                    event_ids: vec!["333".to_owned()],
                     is_competing: true,
                 }),
                 assignments: vec![Assignment {
                     activity_id: 1011,
-                    code: Some("competitor".to_string()),
+                    code: Some("competitor".to_owned()),
                     station_number: Some(2),
                 }],
+                personal_bests: vec![],
             },
         ],
         events: vec![Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![Round {
-                id: "333-r1".to_string(),
-                format: Some("a".to_string()),
+                id: "333-r1".to_owned(),
+                format: Some("a".to_owned()),
                 time_limit: None,
                 cutoff: None,
                 advancement_condition: None,
@@ -524,21 +529,21 @@ fn test_planner_with_cover_sheets() {
             number_of_days: None,
             venues: vec![Venue {
                 id: Some(1),
-                name: Some("Venue".to_string()),
+                name: Some("Venue".to_owned()),
                 rooms: vec![Room {
                     id: Some(1),
-                    name: Some("Main Hall".to_string()),
+                    name: Some("Main Hall".to_owned()),
                     color: None,
                     activities: vec![Activity {
                         id: 101,
-                        name: "3x3x3 Round 1".to_string(),
-                        code: "333-r1".to_string(),
+                        name: "3x3x3 Round 1".to_owned(),
+                        code: "333-r1".to_owned(),
                         start_time: None,
                         end_time: None,
                         child_activities: vec![Activity {
                             id: 1011,
-                            name: "3x3x3 Round 1 Group 1".to_string(),
-                            code: "333-r1-g1".to_string(),
+                            name: "3x3x3 Round 1 Group 1".to_owned(),
+                            code: "333-r1-g1".to_owned(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![],
@@ -557,15 +562,17 @@ fn test_planner_with_cover_sheets() {
     let plan_all = ScorecardPlanner::plan(
         &comp,
         &["333-r1"],
-        true,
-        &[
-            CoverSheetBy::Stage,
-            CoverSheetBy::Group,
-            CoverSheetBy::Round,
-        ],
-        true,
-        false,
-        false,
+        PlanConfig::new(
+            true,
+            &[
+                CoverSheetBy::Stage,
+                CoverSheetBy::Group,
+                CoverSheetBy::Round,
+            ],
+            true,
+            false,
+            false,
+        ),
     )
     .unwrap();
     // 3 cover sheets (Round, Group, Stage) + 2 competitor cards = 5 items
@@ -627,11 +634,7 @@ fn test_planner_with_cover_sheets() {
     let plan_stage = ScorecardPlanner::plan(
         &comp,
         &["333-r1"],
-        true,
-        &[CoverSheetBy::Stage],
-        true,
-        false,
-        false,
+        PlanConfig::new(true, &[CoverSheetBy::Stage], true, false, false),
     )
     .unwrap();
     assert_eq!(plan_stage.len(), 3);
@@ -647,11 +650,7 @@ fn test_planner_with_cover_sheets() {
     let plan_g = ScorecardPlanner::plan(
         &comp,
         &["333-r1"],
-        true,
-        &[CoverSheetBy::Group],
-        true,
-        false,
-        false,
+        PlanConfig::new(true, &[CoverSheetBy::Group], true, false, false),
     )
     .unwrap();
     assert_eq!(plan_g.len(), 3);
@@ -667,11 +666,7 @@ fn test_planner_with_cover_sheets() {
     let plan_r = ScorecardPlanner::plan(
         &comp,
         &["333-r1"],
-        true,
-        &[CoverSheetBy::Round],
-        true,
-        false,
-        false,
+        PlanConfig::new(true, &[CoverSheetBy::Round], true, false, false),
     )
     .unwrap();
     assert_eq!(plan_r.len(), 3);
@@ -687,68 +682,71 @@ fn test_planner_with_cover_sheets() {
 #[test]
 fn test_planner_additive_multi_stage_multi_group() {
     let comp = Competition {
-        format_version: Some("1.0".to_string()),
-        id: "MultiStageComp2026".to_string(),
-        name: "Multi Stage Comp 2026".to_string(),
+        format_version: Some("1.0".to_owned()),
+        id: "MultiStageComp2026".to_owned(),
+        name: "Multi Stage Comp 2026".to_owned(),
         short_name: None,
         persons: vec![
             Person {
                 registrant_id: NonZeroUsize::new(1),
-                name: "Alice Smith".to_string(),
+                name: "Alice Smith".to_owned(),
                 wca_id: WcaId::parse("2022SMIT01"),
                 country_iso2: CountryIso2::parse("US"),
                 registration: Some(Registration {
                     id: NonZeroUsize::new(1),
-                    status: Some("accepted".to_string()),
-                    event_ids: vec!["333".to_string()],
+                    status: Some("accepted".to_owned()),
+                    event_ids: vec!["333".to_owned()],
                     is_competing: true,
                 }),
                 assignments: vec![Assignment {
                     activity_id: 101, // G1 on Blue Stage
                     station_number: Some(1),
-                    code: Some("competitor".to_string()),
+                    code: Some("competitor".to_owned()),
                 }],
+                personal_bests: vec![],
             },
             Person {
                 registrant_id: NonZeroUsize::new(2),
-                name: "Bob Jones".to_string(),
+                name: "Bob Jones".to_owned(),
                 wca_id: WcaId::parse("2021JONE01"),
                 country_iso2: CountryIso2::parse("US"),
                 registration: Some(Registration {
                     id: NonZeroUsize::new(2),
-                    status: Some("accepted".to_string()),
-                    event_ids: vec!["333".to_string()],
+                    status: Some("accepted".to_owned()),
+                    event_ids: vec!["333".to_owned()],
                     is_competing: true,
                 }),
                 assignments: vec![Assignment {
                     activity_id: 102, // G1 on Red Stage
                     station_number: Some(1),
-                    code: Some("competitor".to_string()),
+                    code: Some("competitor".to_owned()),
                 }],
+                personal_bests: vec![],
             },
             Person {
                 registrant_id: NonZeroUsize::new(3),
-                name: "Charlie Brown".to_string(),
+                name: "Charlie Brown".to_owned(),
                 wca_id: WcaId::parse("2020BROW01"),
                 country_iso2: CountryIso2::parse("US"),
                 registration: Some(Registration {
                     id: NonZeroUsize::new(3),
-                    status: Some("accepted".to_string()),
-                    event_ids: vec!["333".to_string()],
+                    status: Some("accepted".to_owned()),
+                    event_ids: vec!["333".to_owned()],
                     is_competing: true,
                 }),
                 assignments: vec![Assignment {
                     activity_id: 103, // G2 on Red Stage
                     station_number: Some(1),
-                    code: Some("competitor".to_string()),
+                    code: Some("competitor".to_owned()),
                 }],
+                personal_bests: vec![],
             },
         ],
         events: vec![Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![Round {
-                id: "333-r1".to_string(),
-                format: Some("a".to_string()),
+                id: "333-r1".to_owned(),
+                format: Some("a".to_owned()),
                 time_limit: None,
                 cutoff: None,
                 advancement_condition: None,
@@ -762,16 +760,16 @@ fn test_planner_additive_multi_stage_multi_group() {
             number_of_days: None,
             venues: vec![Venue {
                 id: Some(1),
-                name: Some("Venue".to_string()),
+                name: Some("Venue".to_owned()),
                 rooms: vec![
                     Room {
                         id: Some(1),
-                        name: Some("Blue Stage".to_string()),
+                        name: Some("Blue Stage".to_owned()),
                         color: None,
                         activities: vec![Activity {
                             id: 101,
-                            name: "3x3x3 Round 1 Group 1".to_string(),
-                            code: "333-r1-g1".to_string(),
+                            name: "3x3x3 Round 1 Group 1".to_owned(),
+                            code: "333-r1-g1".to_owned(),
                             start_time: None,
                             end_time: None,
                             child_activities: vec![],
@@ -780,13 +778,13 @@ fn test_planner_additive_multi_stage_multi_group() {
                     },
                     Room {
                         id: Some(2),
-                        name: Some("Red Stage".to_string()),
+                        name: Some("Red Stage".to_owned()),
                         color: None,
                         activities: vec![
                             Activity {
                                 id: 102,
-                                name: "3x3x3 Round 1 Group 1".to_string(),
-                                code: "333-r1-g1".to_string(),
+                                name: "3x3x3 Round 1 Group 1".to_owned(),
+                                code: "333-r1-g1".to_owned(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -794,8 +792,8 @@ fn test_planner_additive_multi_stage_multi_group() {
                             },
                             Activity {
                                 id: 103,
-                                name: "3x3x3 Round 1 Group 2".to_string(),
-                                code: "333-r1-g2".to_string(),
+                                name: "3x3x3 Round 1 Group 2".to_owned(),
+                                code: "333-r1-g2".to_owned(),
                                 start_time: None,
                                 end_time: None,
                                 child_activities: vec![],
@@ -813,15 +811,17 @@ fn test_planner_additive_multi_stage_multi_group() {
     let plan = ScorecardPlanner::plan(
         &comp,
         &["333-r1"],
-        true,
-        &[
-            CoverSheetBy::Stage,
-            CoverSheetBy::Group,
-            CoverSheetBy::Round,
-        ],
-        true,
-        false,
-        false,
+        PlanConfig::new(
+            true,
+            &[
+                CoverSheetBy::Stage,
+                CoverSheetBy::Group,
+                CoverSheetBy::Round,
+            ],
+            true,
+            false,
+            false,
+        ),
     )
     .unwrap();
 
@@ -918,28 +918,29 @@ fn test_planner_additive_multi_stage_multi_group() {
 #[test]
 fn test_planner_local_names_first() {
     let comp = Competition {
-        format_version: Some("1.0".to_string()),
-        id: "LocalNameComp2026".to_string(),
-        name: "Local Name Comp 2026".to_string(),
-        short_name: Some("Local Name 2026".to_string()),
+        format_version: Some("1.0".to_owned()),
+        id: "LocalNameComp2026".to_owned(),
+        name: "Local Name Comp 2026".to_owned(),
+        short_name: Some("Local Name 2026".to_owned()),
         persons: vec![Person {
             registrant_id: NonZeroUsize::new(1),
-            name: "Zhang San (张三)".to_string(),
+            name: "Zhang San (张三)".to_owned(),
             wca_id: None,
             country_iso2: CountryIso2::parse("CN"),
             registration: Some(Registration {
                 id: NonZeroUsize::new(1),
-                status: Some("accepted".to_string()),
-                event_ids: vec!["333".to_string()],
+                status: Some("accepted".to_owned()),
+                event_ids: vec!["333".to_owned()],
                 is_competing: true,
             }),
             assignments: vec![],
+            personal_bests: vec![],
         }],
         events: vec![Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![Round {
-                id: "333-r1".to_string(),
-                format: Some("a".to_string()),
+                id: "333-r1".to_owned(),
+                format: Some("a".to_owned()),
                 time_limit: None,
                 cutoff: None,
                 advancement_condition: None,
@@ -953,8 +954,12 @@ fn test_planner_local_names_first() {
     };
 
     // With local_names_first = false: primary is "Zhang San", local is Some("张三")
-    let plan_standard =
-        ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], false, false, false).unwrap();
+    let plan_standard = ScorecardPlanner::plan(
+        &comp,
+        &["333-r1"],
+        PlanConfig::new(false, &[], false, false, false),
+    )
+    .unwrap();
     assert_eq!(plan_standard.len(), 1);
     if let ScorecardItem::Scorecard(sc) = &plan_standard[0] {
         assert_eq!(sc.competitor.name, "Zhang San");
@@ -964,8 +969,12 @@ fn test_planner_local_names_first() {
     }
 
     // With local_names_first = true: primary is "张三", local is Some("Zhang San")
-    let plan_local_first =
-        ScorecardPlanner::plan(&comp, &["333-r1"], false, &[], false, false, true).unwrap();
+    let plan_local_first = ScorecardPlanner::plan(
+        &comp,
+        &["333-r1"],
+        PlanConfig::new(false, &[], false, false, true),
+    )
+    .unwrap();
     assert_eq!(plan_local_first.len(), 1);
     if let ScorecardItem::Scorecard(sc) = &plan_local_first[0] {
         assert_eq!(sc.competitor.name, "张三");
@@ -973,4 +982,295 @@ fn test_planner_local_names_first() {
     } else {
         panic!("Expected Scorecard");
     }
+}
+
+#[test]
+fn test_scramble_checker_top_ranked_and_excluded_events() {
+    let make_person = |id: usize, name: &str, pbs: Vec<PersonalBest>| Person {
+        registrant_id: NonZeroUsize::new(id),
+        name: name.to_owned(),
+        wca_id: Some(WcaId::parse(&format!("2020TEST{:02}", id)).unwrap()),
+        country_iso2: CountryIso2::parse("US"),
+        registration: Some(Registration {
+            id: NonZeroUsize::new(id),
+            status: Some("accepted".to_owned()),
+            event_ids: vec!["333".to_owned(), "555".to_owned()],
+            is_competing: true,
+        }),
+        assignments: vec![],
+        personal_bests: pbs,
+    };
+
+    // p1: 333 single world rank 50 (qualifies <= 50)
+    let p1 = make_person(
+        1,
+        "Single WR 50",
+        vec![PersonalBest {
+            event_id: "333".to_owned(),
+            best_type: "single".to_owned(),
+            best: Some(500),
+            world_ranking: Some(50),
+            national_ranking: Some(10),
+            continental_ranking: Some(20),
+        }],
+    );
+
+    // p2: 333 single world rank 51, no average (does not qualify)
+    let p2 = make_person(
+        2,
+        "Single WR 51",
+        vec![PersonalBest {
+            event_id: "333".to_owned(),
+            best_type: "single".to_owned(),
+            best: Some(501),
+            world_ranking: Some(51),
+            national_ranking: Some(10),
+            continental_ranking: Some(20),
+        }],
+    );
+
+    // p3: 333 average world rank 42 (qualifies <= 50)
+    let p3 = make_person(
+        3,
+        "Average WR 42",
+        vec![PersonalBest {
+            event_id: "333".to_owned(),
+            best_type: "average".to_owned(),
+            best: Some(600),
+            world_ranking: Some(42),
+            national_ranking: Some(20),
+            continental_ranking: Some(30),
+        }],
+    );
+
+    // p4: 333 average national rank 15 (qualifies <= 15 even with world rank 100)
+    let p4 = make_person(
+        4,
+        "Average NR 15",
+        vec![PersonalBest {
+            event_id: "333".to_owned(),
+            best_type: "average".to_owned(),
+            best: Some(700),
+            world_ranking: Some(100),
+            national_ranking: Some(15),
+            continental_ranking: Some(50),
+        }],
+    );
+
+    // p5: 333 average national rank 16 (does not qualify)
+    let p5 = make_person(
+        5,
+        "Average NR 16",
+        vec![PersonalBest {
+            event_id: "333".to_owned(),
+            best_type: "average".to_owned(),
+            best: Some(705),
+            world_ranking: Some(100),
+            national_ranking: Some(16),
+            continental_ranking: Some(50),
+        }],
+    );
+
+    // p6: 555 world rank 1 (single & average) - but 555 is an excluded event!
+    let p6 = make_person(
+        6,
+        "555 WR 1",
+        vec![
+            PersonalBest {
+                event_id: "555".to_owned(),
+                best_type: "single".to_owned(),
+                best: Some(3500),
+                world_ranking: Some(1),
+                national_ranking: Some(1),
+                continental_ranking: Some(1),
+            },
+            PersonalBest {
+                event_id: "555".to_owned(),
+                best_type: "average".to_owned(),
+                best: Some(3800),
+                world_ranking: Some(1),
+                national_ranking: Some(1),
+                continental_ranking: Some(1),
+            },
+        ],
+    );
+
+    let comp = Competition {
+        format_version: Some("1.0".to_owned()),
+        id: "CheckerComp2026".to_owned(),
+        name: "Checker Comp 2026".to_owned(),
+        short_name: None,
+        persons: vec![p1, p2, p3, p4, p5, p6],
+        events: vec![
+            Event {
+                id: "333".to_owned(),
+                rounds: vec![Round {
+                    id: "333-r1".to_owned(),
+                    format: Some("a".to_owned()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                }],
+                competitor_limit: None,
+                qualification: None,
+            },
+            Event {
+                id: "555".to_owned(),
+                rounds: vec![Round {
+                    id: "555-r1".to_owned(),
+                    format: Some("a".to_owned()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                }],
+                competitor_limit: None,
+                qualification: None,
+            },
+        ],
+        schedule: None,
+        extensions: vec![],
+    };
+
+    let config = PlanConfig::default().with_scramble_checker(true, false, false);
+    let plan = ScorecardPlanner::plan(&comp, &["333-r1", "555-r1"], config).unwrap();
+
+    let check_map: std::collections::HashMap<String, bool> = plan
+        .iter()
+        .filter_map(|item| match item {
+            ScorecardItem::Scorecard(sc) => Some((
+                format!("{}:{}", sc.event, sc.competitor.name),
+                sc.needs_scramble_checker,
+            )),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(check_map.get("333:Single WR 50"), Some(&true));
+    assert_eq!(check_map.get("333:Single WR 51"), Some(&false));
+    assert_eq!(check_map.get("333:Average WR 42"), Some(&true));
+    assert_eq!(check_map.get("333:Average NR 15"), Some(&true));
+    assert_eq!(check_map.get("333:Average NR 16"), Some(&false));
+    // 555 excluded event
+    assert_eq!(check_map.get("555:555 WR 1"), Some(&false));
+}
+
+#[test]
+fn test_scramble_checker_final_rounds_and_blank_scorecards() {
+    let comp = Competition {
+        format_version: Some("1.0".to_owned()),
+        id: "FinalRoundComp2026".to_owned(),
+        name: "Final Round Comp 2026".to_owned(),
+        short_name: None,
+        persons: vec![Person {
+            registrant_id: NonZeroUsize::new(1),
+            name: "Alice Competitor".to_owned(),
+            wca_id: None,
+            country_iso2: None,
+            registration: Some(Registration {
+                id: NonZeroUsize::new(1),
+                status: Some("accepted".to_owned()),
+                event_ids: vec!["333".to_owned(), "555".to_owned()],
+                is_competing: true,
+            }),
+            assignments: vec![],
+            personal_bests: vec![], // No rankings
+        }],
+        events: vec![
+            Event {
+                id: "333".to_owned(),
+                rounds: vec![
+                    Round {
+                        id: "333-r1".to_owned(),
+                        format: Some("a".to_owned()),
+                        time_limit: None,
+                        cutoff: None,
+                        advancement_condition: None,
+                        scramble_group_count: 1,
+                    },
+                    Round {
+                        id: "333-r2".to_owned(),
+                        format: Some("a".to_owned()),
+                        time_limit: None,
+                        cutoff: None,
+                        advancement_condition: None,
+                        scramble_group_count: 1,
+                    },
+                ],
+                competitor_limit: None,
+                qualification: None,
+            },
+            Event {
+                id: "555".to_owned(),
+                rounds: vec![Round {
+                    id: "555-r1".to_owned(),
+                    format: Some("a".to_owned()),
+                    time_limit: None,
+                    cutoff: None,
+                    advancement_condition: None,
+                    scramble_group_count: 1,
+                }],
+                competitor_limit: None,
+                qualification: None,
+            },
+        ],
+        schedule: None,
+        extensions: vec![],
+    };
+
+    // 1. With final_rounds = true: 333-r1 is not final (false), 333-r2 is final (true), 555-r1 is final but excluded (false)
+    let config_final = PlanConfig::default().with_scramble_checker(false, true, false);
+    let plan =
+        ScorecardPlanner::plan(&comp, &["333-r1", "333-r2", "555-r1"], config_final).unwrap();
+
+    let check_map: std::collections::HashMap<String, bool> = plan
+        .iter()
+        .filter_map(|item| match item {
+            ScorecardItem::Scorecard(sc) => Some((
+                format!("{}-r{}", sc.event, sc.round_number),
+                sc.needs_scramble_checker,
+            )),
+            ScorecardItem::Blank(b) => Some((
+                format!("{}-r{}", b.event, b.round_number),
+                b.needs_scramble_checker,
+            )),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(check_map.get("333-r1"), Some(&false));
+    assert_eq!(check_map.get("333-r2"), Some(&true));
+    assert_eq!(check_map.get("555-r1"), Some(&false));
+
+    // 2. Blank scorecards:
+    // When final_rounds is true, final round 333-r2 gets checker, non-final 333-r1 does not, 555 excluded
+    assert!(!planner::should_print_scramble_checker_for_blank(
+        &comp.events[0],
+        &comp.events[0].rounds[0],
+        &config_final,
+    ));
+    assert!(planner::should_print_scramble_checker_for_blank(
+        &comp.events[0],
+        &comp.events[0].rounds[1],
+        &config_final,
+    ));
+    assert!(!planner::should_print_scramble_checker_for_blank(
+        &comp.events[1],
+        &comp.events[1].rounds[0],
+        &config_final,
+    ));
+
+    // When scramble_checker_blank is true, 333-r1 gets checker, 555 excluded
+    let config_blank = PlanConfig::default().with_scramble_checker(false, false, true);
+    assert!(planner::should_print_scramble_checker_for_blank(
+        &comp.events[0],
+        &comp.events[0].rounds[0],
+        &config_blank,
+    ));
+    assert!(!planner::should_print_scramble_checker_for_blank(
+        &comp.events[1],
+        &comp.events[1].rounds[0],
+        &config_blank,
+    ));
 }

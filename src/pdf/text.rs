@@ -30,6 +30,17 @@ pub struct TextSpec<'a> {
     pub align: TextAlign,
 }
 
+/// Specification for rendering competitor names with primary and optional local native script.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CompetitorNameSpec<'a> {
+    pub primary: &'a str,
+    pub local: Option<&'a str>,
+    pub start_x: f32,
+    pub baseline_y: f32,
+    pub font_size: f32,
+    pub custom_font: Option<&'a FontId>,
+}
+
 pub const HELVETICA_WIDTHS: [f32; 95] = [
     0.278, 0.278, 0.355, 0.556, 0.556, 0.889, 0.667, 0.191, 0.333, 0.333, 0.389, 0.584, 0.278,
     0.333, 0.278, 0.278, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556, 0.556,
@@ -72,20 +83,12 @@ impl TextDrawer {
     }
 
     /// Renders a competitor name: bold Latin primary name followed optionally by unbolded parenthesized local name.
-    pub fn draw_competitor_name(
-        ops: &mut Vec<Op>,
-        primary: &str,
-        local: Option<&str>,
-        start_x: f32,
-        baseline_y: f32,
-        font_size: f32,
-        custom_font: Option<&FontId>,
-    ) {
-        let mut cur_x = start_x;
+    pub fn draw_competitor_name(ops: &mut Vec<Op>, spec: CompetitorNameSpec<'_>) {
+        let mut cur_x = spec.start_x;
 
-        if !primary.is_empty() {
-            let font = if primary.chars().any(|c| !is_win_ansi(c)) {
-                if let Some(id) = custom_font {
+        if !spec.primary.is_empty() {
+            let font = if spec.primary.chars().any(|c| !is_win_ansi(c)) {
+                if let Some(id) = spec.custom_font {
                     PdfFontHandle::External(id.clone())
                 } else {
                     PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
@@ -93,30 +96,37 @@ impl TextDrawer {
             } else {
                 PdfFontHandle::Builtin(BuiltinFont::HelveticaBold)
             };
-            Self::emit_text_ops(ops, font, font_size, cur_x, baseline_y, primary);
-            cur_x += Self::estimate_width(primary, font_size, true);
+            Self::emit_text_ops(
+                ops,
+                font,
+                spec.font_size,
+                cur_x,
+                spec.baseline_y,
+                spec.primary,
+            );
+            cur_x += Self::estimate_width(spec.primary, spec.font_size, true);
         }
 
-        if let Some(local_name) = local {
+        if let Some(local_name) = spec.local {
             let paren_pad = if local_name.chars().any(is_cjk) {
-                Self::CJK_PAREN_PAD_EM * font_size
+                Self::CJK_PAREN_PAD_EM * spec.font_size
             } else {
                 0.0
             };
 
-            let open_paren_str = if primary.is_empty() { "(" } else { " (" };
+            let open_paren_str = if spec.primary.is_empty() { "(" } else { " (" };
             Self::emit_text_ops(
                 ops,
                 PdfFontHandle::Builtin(BuiltinFont::Helvetica),
-                font_size,
+                spec.font_size,
                 cur_x,
-                baseline_y,
+                spec.baseline_y,
                 open_paren_str,
             );
-            cur_x += Self::estimate_width(open_paren_str, font_size, false) + paren_pad;
+            cur_x += Self::estimate_width(open_paren_str, spec.font_size, false) + paren_pad;
 
             let local_font = if local_name.chars().any(|c| !is_win_ansi(c)) {
-                if let Some(id) = custom_font {
+                if let Some(id) = spec.custom_font {
                     PdfFontHandle::External(id.clone())
                 } else {
                     PdfFontHandle::Builtin(BuiltinFont::Helvetica)
@@ -124,15 +134,22 @@ impl TextDrawer {
             } else {
                 PdfFontHandle::Builtin(BuiltinFont::Helvetica)
             };
-            Self::emit_text_ops(ops, local_font, font_size, cur_x, baseline_y, local_name);
-            cur_x += Self::estimate_width(local_name, font_size, false) + paren_pad;
+            Self::emit_text_ops(
+                ops,
+                local_font,
+                spec.font_size,
+                cur_x,
+                spec.baseline_y,
+                local_name,
+            );
+            cur_x += Self::estimate_width(local_name, spec.font_size, false) + paren_pad;
 
             Self::emit_text_ops(
                 ops,
                 PdfFontHandle::Builtin(BuiltinFont::Helvetica),
-                font_size,
+                spec.font_size,
                 cur_x,
-                baseline_y,
+                spec.baseline_y,
                 ")",
             );
         }

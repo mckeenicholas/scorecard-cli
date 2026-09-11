@@ -15,16 +15,18 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::*;
-    use crate::scorecard::{Competitor, ScorecardItem, TimeLimitInfo, WcaEvent, WcaResult};
+    use crate::scorecard::{
+        BlankScorecard, Competitor, Scorecard, TimeLimitInfo, WcaEvent, WcaResult,
+    };
     use crate::wcif::{Competition, WcaId};
 
     #[test]
     fn test_pdf_generator_formats() {
         let comp = Competition {
-            format_version: Some("1.0".to_string()),
-            id: "TestComp".to_string(),
-            name: "Test Competition 2026".to_string(),
-            short_name: Some("Test Comp".to_string()),
+            format_version: Some("1.0".to_owned()),
+            id: "TestComp".to_owned(),
+            name: "Test Competition 2026".to_owned(),
+            short_name: Some("Test Comp".to_owned()),
             persons: vec![],
             events: vec![],
             schedule: None,
@@ -32,28 +34,28 @@ mod tests {
         };
 
         let cards = vec![
-            ScorecardItem::scorecard(
+            Scorecard::new(
                 "Test Comp",
                 WcaEvent::E333,
                 1,
                 1,
-                Some("Main Stage"),
                 Competitor {
                     name: "Alice Smith",
                     local_name: None,
                     registrant_id: NonZeroUsize::MIN,
                     wca_id: WcaId::parse("2022SMIT01"),
                 },
-                Some(1),
-                5,
-                Some(TimeLimitInfo {
-                    limit_centiseconds: WcaResult::new(60000),
-                    is_cumulative: false,
-                    cutoff_centiseconds: None,
-                    cutoff_attempts: 0,
-                }),
-            ),
-            ScorecardItem::blank("Test Comp", WcaEvent::E333, 2, 1, None, 5, None),
+            )
+            .with_stage(Some("Main Stage"))
+            .with_station(Some(1))
+            .with_time_limit(Some(TimeLimitInfo {
+                limit_centiseconds: WcaResult::new(60000),
+                is_cumulative: false,
+                cutoff_centiseconds: None,
+                cutoff_attempts: 0,
+            }))
+            .into(),
+            BlankScorecard::new("Test Comp", WcaEvent::E333, 2, 1).into(),
         ];
 
         let gen_a4 = PdfGenerator::new(PageLayout::new(layout::PaperSize::A4));

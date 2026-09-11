@@ -264,11 +264,11 @@ pub fn validate_split_compatibility(
 pub fn write_and_report_partition(
     generator: &PdfGenerator,
     comp: &wcif::Competition,
-    out_filename: &str,
-    partition_cards: &[ScorecardItem<'_>],
+    partition: &(String, Cow<'_, [ScorecardItem<'_>]>),
     is_multi: bool,
 ) -> Result<usize, crate::AppError> {
-    let page_count = write_pdf_file(generator, comp, out_filename, partition_cards)?;
+    let (out_filename, partition_cards) = partition;
+    let page_count = write_pdf_file(generator, comp, out_filename, partition_cards.as_ref())?;
     let icon = "✔".green();
     let real_card_count = partition_cards.iter().filter(|c| !c.is_empty()).count();
     let scorecards_word = if real_card_count == 1 {
@@ -280,7 +280,7 @@ pub fn write_and_report_partition(
     if is_multi {
         println!(
             "  {icon} Generated {} ({} {}, {} {})",
-            out_filename.cyan(),
+            out_filename.as_str().cyan(),
             real_card_count,
             scorecards_word,
             page_count,
@@ -289,7 +289,7 @@ pub fn write_and_report_partition(
     } else {
         println!(
             "{icon} Successfully generated scorecards PDF: {} ({} {}, {} {})",
-            out_filename.cyan(),
+            out_filename.as_str().cyan(),
             real_card_count,
             scorecards_word,
             page_count,
@@ -320,14 +320,8 @@ pub fn generate_partitioned_pdfs(
     }
 
     let mut total_pages = 0;
-    for (out_filename, partition_cards) in &partitions {
-        let pages = write_and_report_partition(
-            &generator,
-            comp,
-            out_filename,
-            partition_cards.as_ref(),
-            is_multi,
-        )?;
+    for partition in &partitions {
+        let pages = write_and_report_partition(&generator, comp, partition, is_multi)?;
         total_pages += pages;
     }
 
@@ -349,7 +343,7 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::*;
-    use crate::scorecard::Competitor;
+    use crate::scorecard::{Competitor, Scorecard};
 
     const ID1: NonZeroUsize = NonZeroUsize::MIN;
     const ID2: NonZeroUsize = match NonZeroUsize::new(2) {
@@ -368,38 +362,36 @@ mod tests {
     #[test]
     fn test_partition_scorecards_none() {
         let cards = vec![
-            ScorecardItem::scorecard(
+            Scorecard::new(
                 "Comp",
                 WcaEvent::E333,
                 1,
                 1,
-                Some("Red Stage"),
                 Competitor {
                     name: "Alice",
                     local_name: None,
                     registrant_id: ID1,
                     wca_id: None,
                 },
-                Some(1),
-                5,
-                None,
-            ),
-            ScorecardItem::scorecard(
+            )
+            .with_stage(Some("Red Stage"))
+            .with_station(Some(1))
+            .into(),
+            Scorecard::new(
                 "Comp",
                 WcaEvent::E222,
                 1,
                 2,
-                Some("Blue Stage"),
                 Competitor {
                     name: "Bob",
                     local_name: None,
                     registrant_id: ID2,
                     wca_id: None,
                 },
-                Some(2),
-                5,
-                None,
-            ),
+            )
+            .with_stage(Some("Blue Stage"))
+            .with_station(Some(2))
+            .into(),
         ];
 
         let partitions = partition_scorecards("Comp2026", &cards, &[]);
@@ -411,38 +403,36 @@ mod tests {
     #[test]
     fn test_partition_scorecards_by_event() {
         let cards = vec![
-            ScorecardItem::scorecard(
+            Scorecard::new(
                 "Comp",
                 WcaEvent::E333,
                 1,
                 1,
-                Some("Red Stage"),
                 Competitor {
                     name: "Alice",
                     local_name: None,
                     registrant_id: ID1,
                     wca_id: None,
                 },
-                Some(1),
-                5,
-                None,
-            ),
-            ScorecardItem::scorecard(
+            )
+            .with_stage(Some("Red Stage"))
+            .with_station(Some(1))
+            .into(),
+            Scorecard::new(
                 "Comp",
                 WcaEvent::E222,
                 1,
                 2,
-                Some("Blue Stage"),
                 Competitor {
                     name: "Bob",
                     local_name: None,
                     registrant_id: ID2,
                     wca_id: None,
                 },
-                Some(2),
-                5,
-                None,
-            ),
+            )
+            .with_stage(Some("Blue Stage"))
+            .with_station(Some(2))
+            .into(),
         ];
 
         let partitions = partition_scorecards("Comp2026", &cards, &[SplitBy::Event]);
@@ -454,38 +444,36 @@ mod tests {
     #[test]
     fn test_partition_scorecards_by_all_three() {
         let cards = vec![
-            ScorecardItem::scorecard(
+            Scorecard::new(
                 "Comp",
                 WcaEvent::E333,
                 1,
                 1,
-                Some("Red Stage"),
                 Competitor {
                     name: "Alice",
                     local_name: None,
                     registrant_id: ID1,
                     wca_id: None,
                 },
-                Some(1),
-                5,
-                None,
-            ),
-            ScorecardItem::scorecard(
+            )
+            .with_stage(Some("Red Stage"))
+            .with_station(Some(1))
+            .into(),
+            Scorecard::new(
                 "Comp",
                 WcaEvent::E333,
                 1,
                 2,
-                Some("Red Stage"),
                 Competitor {
                     name: "Bob",
                     local_name: None,
                     registrant_id: ID2,
                     wca_id: None,
                 },
-                Some(2),
-                5,
-                None,
-            ),
+            )
+            .with_stage(Some("Red Stage"))
+            .with_station(Some(2))
+            .into(),
         ];
 
         let partitions = partition_scorecards(
@@ -507,22 +495,21 @@ mod tests {
     #[test]
     fn test_validate_split_compatibility() {
         use options::CoverSheetBy;
-        let card1 = ScorecardItem::scorecard(
+        let card1 = Scorecard::new(
             "Comp",
             WcaEvent::E333,
             1,
             1,
-            Some("Red Stage"),
             Competitor {
                 name: "Alice",
                 local_name: None,
                 registrant_id: ID1,
                 wca_id: None,
             },
-            Some(1),
-            5,
-            None,
-        );
+        )
+        .with_stage(Some("Red Stage"))
+        .with_station(Some(1))
+        .into();
 
         let opts_cover_on = ResolvedOptions {
             cover_sheets: true,
@@ -535,7 +522,7 @@ mod tests {
         };
 
         let partitions_ok = vec![(
-            "file1.pdf".to_string(),
+            "file1.pdf".to_owned(),
             Cow::Borrowed(std::slice::from_ref(&card1)),
         )];
         assert!(validate_split_compatibility(&partitions_ok, &opts_cover_on).is_ok());
@@ -544,11 +531,11 @@ mod tests {
         // Split same bundle across two files
         let partitions_split = vec![
             (
-                "file1.pdf".to_string(),
+                "file1.pdf".to_owned(),
                 Cow::Borrowed(std::slice::from_ref(&card1)),
             ),
             (
-                "file2.pdf".to_string(),
+                "file2.pdf".to_owned(),
                 Cow::Borrowed(std::slice::from_ref(&card1)),
             ),
         ];

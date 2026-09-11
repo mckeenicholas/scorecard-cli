@@ -9,6 +9,8 @@ pub use model::{
     BlankScorecard, Competitor, CoverSheet, GroupNumber, RoundNumber, Scorecard, ScorecardItem,
     TimeLimitInfo,
 };
+#[cfg(test)]
+pub use planner::PlanConfig;
 pub use planner::{PlannerError, ScorecardPlanner};
 
 #[cfg(test)]

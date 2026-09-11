@@ -10,7 +10,7 @@ use crate::wcif::GroupifierCompetitionConfig;
 fn test_cli_parsing_basic() {
     let args = vec!["scorecard-gen", "Comp2026", "333", "333-2"];
     let cli = Cli::try_parse_from(args).unwrap();
-    assert_eq!(cli.comp_source, Some("Comp2026".to_string()));
+    assert_eq!(cli.comp_source, Some("Comp2026".to_owned()));
     assert_eq!(cli.events, vec!["333", "333-2"]);
 }
 
@@ -74,9 +74,9 @@ fn test_cli_split_parsing() {
 fn test_resolved_options_merge() {
     let cli = Cli::try_parse_from(vec!["scorecard-gen", "Comp2026", "-p", "letter"]).unwrap();
     let groupifier = GroupifierCompetitionConfig {
-        scorecard_paper_size: Some("a4".to_string()),
+        scorecard_paper_size: Some("a4".to_owned()),
         print_stations: Some(true),
-        scorecard_order: Some("stacked".to_string()),
+        scorecard_order: Some("stacked".to_owned()),
         ..Default::default()
     };
 

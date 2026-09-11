@@ -23,7 +23,7 @@ use wcif::{WcifLoadError, WcifLoader};
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-/// Top-level application error::Error encompassing all potential failure modes.
+/// Top-level application `error::Error` encompassing all potential failure modes.
 #[derive(Debug)]
 pub enum AppError {
     Wcif(WcifLoadError),
@@ -129,15 +129,7 @@ fn run() -> Result<(), AppError> {
     let active_opts = resolve_options(&cli, &comp);
     println!("\n{active_opts}");
 
-    let plan = ScorecardPlanner::plan(
-        &comp,
-        &cli.events,
-        active_opts.cover_sheets,
-        &active_opts.cover_sheets_by,
-        active_opts.print_stations,
-        active_opts.print_one_name,
-        active_opts.local_names_first,
-    )?;
+    let plan = ScorecardPlanner::plan_with_options(&comp, &cli.events, &active_opts)?;
 
     if plan.is_empty() {
         println!("No scorecards to generate.");

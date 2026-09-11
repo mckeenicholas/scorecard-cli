@@ -302,6 +302,23 @@ where
     deserializer.deserialize_option(OptionalCountryIso2Visitor)
 }
 
+/// Competitor's personal best record for an event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonalBest {
+    pub event_id: String,
+    #[serde(rename = "type")]
+    pub best_type: String,
+    #[serde(default)]
+    pub best: Option<i32>,
+    #[serde(default)]
+    pub world_ranking: Option<usize>,
+    #[serde(default)]
+    pub continental_ranking: Option<usize>,
+    #[serde(default)]
+    pub national_ranking: Option<usize>,
+}
+
 /// Represents a competitor or staff member.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -315,6 +332,8 @@ pub struct Person {
     pub registration: Option<Registration>,
     #[serde(default)]
     pub assignments: Vec<Assignment>,
+    #[serde(default)]
+    pub personal_bests: Vec<PersonalBest>,
 }
 
 /// Root WCIF structure representing a WCA Competition.
@@ -462,6 +481,11 @@ impl Round {
             _ => 5,
         }
     }
+
+    /// Returns true if this round is the final round of the given event in WCIF.
+    pub fn is_final(&self, event: &Event) -> bool {
+        event.rounds.last().is_some_and(|r| r.id == self.id)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -494,7 +518,8 @@ where
     match opt {
         Some(NumOrFloat::Int(n)) => Ok(Some(n)),
         Some(NumOrFloat::Float(f)) => {
-            if f >= 0.0 && f.is_finite() {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            if (0.0..=(u32::MAX as f64)).contains(&f) && f.is_finite() {
                 Ok(Some(f.round() as usize))
             } else {
                 Ok(None)

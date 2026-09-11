@@ -4,9 +4,12 @@ use printpdf::ops::Op;
 
 use crate::pdf::layout::RectSpec;
 use crate::pdf::renderer::ScorecardRenderer;
-use crate::pdf::text::TextDrawer;
+use crate::pdf::text::{CompetitorNameSpec, TextDrawer};
 use crate::pdf::theme;
-use crate::scorecard::{Competitor, ScorecardItem, TimeLimitInfo, WcaEvent, WcaId, WcaResult};
+use crate::scorecard::{
+    BlankScorecard, Competitor, CoverSheet, Scorecard, ScorecardItem, TimeLimitInfo, WcaEvent,
+    WcaId, WcaResult,
+};
 
 #[test]
 fn test_estimate_width() {
@@ -26,27 +29,27 @@ fn test_estimate_width() {
 
 #[test]
 fn test_draw_card_operations() {
-    let card = ScorecardItem::scorecard(
+    let card = Scorecard::new(
         "Test Comp 2026",
         WcaEvent::E333,
         1,
         1,
-        Some("Red Stage"),
         Competitor {
             name: "Alice Smith",
             local_name: None,
             registrant_id: std::num::NonZeroUsize::MIN,
             wca_id: WcaId::parse("2022SMIT01"),
         },
-        Some(4),
-        5,
-        Some(TimeLimitInfo {
-            limit_centiseconds: WcaResult::new(60000),
-            is_cumulative: false,
-            cutoff_centiseconds: None,
-            cutoff_attempts: 0,
-        }),
-    );
+    )
+    .with_stage(Some("Red Stage"))
+    .with_station(Some(4))
+    .with_time_limit(Some(TimeLimitInfo {
+        limit_centiseconds: WcaResult::new(60000),
+        is_cumulative: false,
+        cutoff_centiseconds: None,
+        cutoff_attempts: 0,
+    }))
+    .into();
 
     let mut ops = Vec::new();
     ScorecardRenderer::draw_card(
@@ -96,14 +99,9 @@ fn test_draw_empty_space_produces_no_ops() {
 
 #[test]
 fn test_draw_cover_sheet_operations() {
-    let cover_card = ScorecardItem::cover_sheet(
-        "Ocean State Cubikon 2025",
-        WcaEvent::E333,
-        1,
-        1,
-        Some("Main Hall"),
-        15,
-    );
+    let cover_card = CoverSheet::new("Ocean State Cubikon 2025", WcaEvent::E333, 1, 1, 15)
+        .with_stage(Some("Main Hall"))
+        .into();
 
     let mut ops = Vec::new();
     ScorecardRenderer::draw_card(
@@ -132,17 +130,14 @@ fn test_theme_defaults() {
 
 #[test]
 fn test_event_info_table_3_cols_without_station() {
-    let card_no_station = ScorecardItem::scorecard(
+    let card_no_station = Scorecard::new(
         "Test Comp 2026",
         WcaEvent::E333,
         1,
         1,
-        None,
         Competitor::simple("Alice Smith"),
-        None,
-        5,
-        None,
-    );
+    )
+    .into();
 
     let mut ops_no_station = Vec::new();
     ScorecardRenderer::draw_card(
@@ -163,17 +158,15 @@ fn test_event_info_table_3_cols_without_station() {
         "Expected no 'Station' header when station_number is None"
     );
 
-    let card_with_station = ScorecardItem::scorecard(
+    let card_with_station = Scorecard::new(
         "Test Comp 2026",
         WcaEvent::E333,
         1,
         1,
-        None,
         Competitor::simple("Alice Smith"),
-        Some(3),
-        5,
-        None,
-    );
+    )
+    .with_station(Some(3))
+    .into();
     let mut ops_with_station = Vec::new();
     ScorecardRenderer::draw_card(
         &mut ops_with_station,
@@ -196,22 +189,20 @@ fn test_event_info_table_3_cols_without_station() {
 
 #[test]
 fn test_attempt_table_cutoff_and_extra_banners() {
-    let card = ScorecardItem::scorecard(
+    let card = Scorecard::new(
         "Test Comp 2026",
         WcaEvent::E333,
         1,
         1,
-        None,
         Competitor::simple("Alice Smith"),
-        None,
-        5,
-        Some(TimeLimitInfo {
-            limit_centiseconds: WcaResult::new(60000),
-            is_cumulative: false,
-            cutoff_centiseconds: WcaResult::new(4500),
-            cutoff_attempts: 2,
-        }),
-    );
+    )
+    .with_time_limit(Some(TimeLimitInfo {
+        limit_centiseconds: WcaResult::new(60000),
+        is_cumulative: false,
+        cutoff_centiseconds: WcaResult::new(4500),
+        cutoff_attempts: 2,
+    }))
+    .into();
 
     let mut ops = Vec::new();
     ScorecardRenderer::draw_card(
@@ -265,7 +256,7 @@ fn test_attempt_table_cutoff_and_extra_banners() {
 
 #[test]
 fn test_draw_blank_card_omits_wca_id_and_id_hyphen() {
-    let blank_card = ScorecardItem::blank("Test Comp 2026", WcaEvent::E333, 2, 1, None, 5, None);
+    let blank_card = BlankScorecard::new("Test Comp 2026", WcaEvent::E333, 2, 1).into();
 
     let mut ops = Vec::new();
     ScorecardRenderer::draw_card(
@@ -303,15 +294,17 @@ fn test_draw_blank_card_omits_wca_id_and_id_hyphen() {
 #[test]
 fn test_mixed_font_text_runs() {
     let mut ops = Vec::new();
-    let custom_font = FontId("CustomFontTest".to_string());
+    let custom_font = FontId("CustomFontTest".to_owned());
     TextDrawer::draw_competitor_name(
         &mut ops,
-        "Marco Yang",
-        Some("杨柯辰"),
-        13.0,
-        100.0,
-        10.0,
-        Some(&custom_font),
+        CompetitorNameSpec {
+            primary: "Marco Yang",
+            local: Some("杨柯辰"),
+            start_x: 13.0,
+            baseline_y: 100.0,
+            font_size: 10.0,
+            custom_font: Some(&custom_font),
+        },
     );
 
     let text_runs: Vec<String> = ops
@@ -340,7 +333,7 @@ fn test_mixed_font_text_runs() {
         vec![
             printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::HelveticaBold),
             printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
-            printpdf::ops::PdfFontHandle::External(FontId("CustomFontTest".to_string())),
+            printpdf::ops::PdfFontHandle::External(FontId("CustomFontTest".to_owned())),
             printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
         ]
     );
@@ -359,32 +352,28 @@ fn test_mixed_font_text_runs() {
     let x_cjk = cursor_x_positions[2];
     let x_close = cursor_x_positions[3];
 
-    // 1. Initial position is 13.0
     assert!((x_latin - 13.0).abs() < 1e-4);
-
-    // 2. Open paren starts after "Marco Yang"
-    assert!(x_open > x_latin);
-
-    // 3. CJK text starts after " (" PLUS paren_pad (0.10 * 10.0 = 1.0 pt)
+    let latin_w = TextDrawer::estimate_width("Marco Yang", 10.0, true);
+    assert!((x_open - (x_latin + latin_w)).abs() < 1e-4);
     let open_paren_w = TextDrawer::estimate_width(" (", 10.0, false);
     assert!((x_cjk - (x_open + open_paren_w + 1.0)).abs() < 1e-4);
-
-    // 4. Close paren starts after "杨柯辰" (3 * 10.0 = 30.0 pt) PLUS paren_pad (1.0 pt)
     assert!((x_close - (x_cjk + 30.0 + 1.0)).abs() < 1e-4);
 }
 
 #[test]
 fn test_mixed_font_text_runs_local_names_first() {
     let mut ops = Vec::new();
-    let custom_font = FontId("CustomFontTest".to_string());
+    let custom_font = FontId("CustomFontTest".to_owned());
     TextDrawer::draw_competitor_name(
         &mut ops,
-        "杨柯辰",
-        Some("Marco Yang"),
-        13.0,
-        100.0,
-        10.0,
-        Some(&custom_font),
+        CompetitorNameSpec {
+            primary: "杨柯辰",
+            local: Some("Marco Yang"),
+            start_x: 13.0,
+            baseline_y: 100.0,
+            font_size: 10.0,
+            custom_font: Some(&custom_font),
+        },
     );
 
     let text_runs: Vec<String> = ops
@@ -411,7 +400,7 @@ fn test_mixed_font_text_runs_local_names_first() {
     assert_eq!(
         font_handles,
         vec![
-            printpdf::ops::PdfFontHandle::External(FontId("CustomFontTest".to_string())),
+            printpdf::ops::PdfFontHandle::External(FontId("CustomFontTest".to_owned())),
             printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
             printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
             printpdf::ops::PdfFontHandle::Builtin(BuiltinFont::Helvetica),
@@ -439,4 +428,69 @@ fn test_mixed_font_text_runs_local_names_first() {
     assert!((x_latin - (x_open + open_paren_w)).abs() < 1e-4);
     let latin_w = TextDrawer::estimate_width("Marco Yang", 10.0, false);
     assert!((x_close - (x_latin + latin_w)).abs() < 1e-4);
+}
+
+#[test]
+fn test_draw_card_with_scramble_checker_renders_check_column() {
+    let card = Scorecard::new(
+        "Test Comp 2026",
+        WcaEvent::E333,
+        1,
+        1,
+        Competitor::simple("Alice Smith"),
+    )
+    .with_scramble_checker(true)
+    .into();
+
+    let mut ops = Vec::new();
+    ScorecardRenderer::draw_card(
+        &mut ops,
+        &card,
+        RectSpec::new(18.0, 18.0, 270.0, 380.0),
+        None,
+    );
+
+    let has_check_header = ops.iter().any(|op| match op {
+        Op::ShowText { items } => items.iter().any(|item| match item {
+            printpdf::ops::TextItem::Text(s) => s.as_str() == "Check",
+            _ => false,
+        }),
+        _ => false,
+    });
+    assert!(
+        has_check_header,
+        "Expected 'Check' header column when needs_scramble_checker is true"
+    );
+}
+
+#[test]
+fn test_draw_card_without_scramble_checker_omits_check_column() {
+    let card = Scorecard::new(
+        "Test Comp 2026",
+        WcaEvent::E333,
+        1,
+        1,
+        Competitor::simple("Alice Smith"),
+    )
+    .into();
+
+    let mut ops = Vec::new();
+    ScorecardRenderer::draw_card(
+        &mut ops,
+        &card,
+        RectSpec::new(18.0, 18.0, 270.0, 380.0),
+        None,
+    );
+
+    let has_check_header = ops.iter().any(|op| match op {
+        Op::ShowText { items } => items.iter().any(|item| match item {
+            printpdf::ops::TextItem::Text(s) => s.as_str() == "Check",
+            _ => false,
+        }),
+        _ => false,
+    });
+    assert!(
+        !has_check_header,
+        "Expected no 'Check' header column when needs_scramble_checker is false"
+    );
 }

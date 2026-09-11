@@ -8,7 +8,7 @@ use printpdf::units::Pt;
 use crate::pdf::attempt::{self, AttemptTableSpec};
 use crate::pdf::layout::RectSpec;
 use crate::pdf::table::{ColumnDef, TableDrawer, TableSpec};
-use crate::pdf::text::{self, TextAlign, TextDrawer, TextSpec};
+use crate::pdf::text::{self, CompetitorNameSpec, TextAlign, TextDrawer, TextSpec};
 use crate::pdf::theme::{self, ScorecardTheme};
 use crate::scorecard::{
     BlankScorecard, Competitor, CoverSheet, GroupNumber, RoundNumber, Scorecard, ScorecardItem,
@@ -216,16 +216,13 @@ impl<'a> CardPainter<'a> {
         self.draw_grid_table(14.5, 20.0, col_defs, rows);
 
         if !competitor.name.is_empty() || competitor.local_name.is_some() {
-            let cell_x = self.inner_x + 0.16 * self.inner_w;
-            let cell_w = 0.54 * self.inner_w;
-            self.draw_competitor_name(
-                competitor.name,
-                competitor.local_name,
-                cell_x,
+            let cell = RectSpec::new(
+                self.inner_x + 0.16 * self.inner_w,
                 row_top,
-                cell_w,
+                0.54 * self.inner_w,
                 20.0,
             );
+            self.draw_competitor_name(competitor.name, competitor.local_name, cell);
         }
     }
 
@@ -242,16 +239,8 @@ impl<'a> CardPainter<'a> {
         self.draw_grid_table(14.5, 20.0, col_defs, rows);
     }
 
-    fn draw_competitor_name(
-        &mut self,
-        primary: &str,
-        local: Option<&str>,
-        cell_x: f32,
-        row_top: f32,
-        cell_w: f32,
-        row_h: f32,
-    ) {
-        let max_w = (cell_w - 6.0).max(10.0);
+    fn draw_competitor_name(&mut self, primary: &str, local: Option<&str>, cell: RectSpec) {
+        let max_w = (cell.w - 6.0).max(10.0);
         let full_w =
             TextDrawer::estimate_competitor_name_width(primary, local, self.theme.cell_font_size);
         let font_size = if full_w > max_w {
@@ -260,18 +249,20 @@ impl<'a> CardPainter<'a> {
             self.theme.cell_font_size
         };
 
-        let baseline_y = row_top - row_h + (row_h - font_size) / 2.0 + 1.0;
+        let baseline_y = cell.y - cell.h + (cell.h - font_size) / 2.0 + 1.0;
         let pad = 3.0;
-        let start_x = cell_x + pad;
+        let start_x = cell.x + pad;
 
         TextDrawer::draw_competitor_name(
             self.ops,
-            primary,
-            local,
-            start_x,
-            baseline_y,
-            font_size,
-            self.theme.custom_font.as_ref(),
+            CompetitorNameSpec {
+                primary,
+                local,
+                start_x,
+                baseline_y,
+                font_size,
+                custom_font: self.theme.custom_font.as_ref(),
+            },
         );
     }
 
@@ -281,6 +272,7 @@ impl<'a> CardPainter<'a> {
         &mut self,
         attempt_count: usize,
         time_limit_info: Option<TimeLimitInfo>,
+        has_checker: bool,
     ) {
         self.advance_y(5.0);
         let spec = AttemptTableSpec::build(
@@ -288,6 +280,7 @@ impl<'a> CardPainter<'a> {
             self.cur_y - self.min_y,
             attempt_count,
             time_limit_info,
+            has_checker,
         );
 
         let top_y = self.cur_y;
@@ -313,7 +306,7 @@ impl<'a> CardPainter<'a> {
 
         let mut h_col_x = self.inner_x;
         let h_text_y = top_y - header_h + (header_h - self.theme.header_font_size) / 2.0 + 1.0;
-        for (i, col) in attempt::ATTEMPT_COLUMNS.iter().enumerate() {
+        for (i, col) in spec.columns().iter().enumerate() {
             let w = spec.col_widths[i];
             TextDrawer::draw(
                 self.ops,
@@ -397,7 +390,7 @@ impl<'a> CardPainter<'a> {
         self.draw_line(self.inner_x, next_y, self.inner_x + self.inner_w, next_y);
 
         let mut div_x = self.inner_x;
-        for &w in spec.col_widths.iter().take(spec.col_widths.len() - 1) {
+        for &w in spec.active_col_widths().iter().take(spec.col_count - 1) {
             div_x += w;
             self.draw_line(div_x, cur_row_y, div_x, next_y);
         }
@@ -533,7 +526,11 @@ impl<'a> CardPainter<'a> {
             card.station_number,
         );
         self.draw_competitor_info_table(&card.competitor);
-        self.draw_attempt_table(card.attempt_count, card.time_limit_info);
+        self.draw_attempt_table(
+            card.attempt_count,
+            card.time_limit_info,
+            card.needs_scramble_checker,
+        );
     }
 
     /// Draws a blank scorecard for subsequent rounds.
@@ -547,7 +544,11 @@ impl<'a> CardPainter<'a> {
             card.station_number,
         );
         self.draw_blank_competitor_info_table();
-        self.draw_attempt_table(card.attempt_count, card.time_limit_info);
+        self.draw_attempt_table(
+            card.attempt_count,
+            card.time_limit_info,
+            card.needs_scramble_checker,
+        );
     }
 
     /// Draws a complete cover sheet for a group with competition info, checkboxes, and signature fields.

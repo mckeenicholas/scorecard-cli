@@ -21,9 +21,9 @@ pub struct ResolvedOptions {
     pub local_names_first: bool,
     pub print_one_name: bool,
     pub print_stations: bool,
-    pub scramble_checker_top_ranked: bool, // TODO: wire to renderer
-    pub scramble_checker_final_rounds: bool, // TODO: wire to renderer
-    pub scramble_checker_blank: bool,      // TODO: wire to renderer
+    pub scramble_checker_top_ranked: bool,
+    pub scramble_checker_final_rounds: bool,
+    pub scramble_checker_blank: bool,
     pub start_group_on_new_page: bool,
     pub font: Option<PathBuf>,
 }

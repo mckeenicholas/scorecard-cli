@@ -316,9 +316,69 @@ pub struct Scorecard<'a> {
     pub competitor: Competitor<'a>,
     pub attempt_count: usize,
     pub time_limit_info: Option<TimeLimitInfo>,
+    pub needs_scramble_checker: bool,
 }
 
-impl Scorecard<'_> {
+impl<'a> Scorecard<'a> {
+    /// Creates a new `Scorecard` with default settings (5 attempts, unnumbered, no station/stage/limit/checker).
+    pub const fn new(
+        competition_name: &'a str,
+        event: WcaEvent,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
+        competitor: Competitor<'a>,
+    ) -> Self {
+        Self {
+            number: 0,
+            station_number: None,
+            competition_name,
+            event,
+            round_number,
+            group_number,
+            stage_name: None,
+            competitor,
+            attempt_count: 5,
+            time_limit_info: None,
+            needs_scramble_checker: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_number(mut self, number: usize) -> Self {
+        self.number = number;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_station(mut self, station_number: Option<usize>) -> Self {
+        self.station_number = station_number;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_stage(mut self, stage_name: Option<&'a str>) -> Self {
+        self.stage_name = stage_name;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_attempts(mut self, attempt_count: usize) -> Self {
+        self.attempt_count = attempt_count;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_time_limit(mut self, time_limit_info: Option<TimeLimitInfo>) -> Self {
+        self.time_limit_info = time_limit_info;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_scramble_checker(mut self, needs_scramble_checker: bool) -> Self {
+        self.needs_scramble_checker = needs_scramble_checker;
+        self
+    }
+
     #[must_use]
     pub const fn event_id(&self) -> &'static str {
         self.event.code()
@@ -350,9 +410,67 @@ pub struct BlankScorecard<'a> {
     pub stage_name: Option<&'a str>,
     pub attempt_count: usize,
     pub time_limit_info: Option<TimeLimitInfo>,
+    pub needs_scramble_checker: bool,
 }
 
-impl BlankScorecard<'_> {
+impl<'a> BlankScorecard<'a> {
+    /// Creates a new `BlankScorecard` with default settings (5 attempts, unnumbered, no station/stage/limit/checker).
+    pub const fn new(
+        competition_name: &'a str,
+        event: WcaEvent,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
+    ) -> Self {
+        Self {
+            number: 0,
+            station_number: None,
+            competition_name,
+            event,
+            round_number,
+            group_number,
+            stage_name: None,
+            attempt_count: 5,
+            time_limit_info: None,
+            needs_scramble_checker: false,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_number(mut self, number: usize) -> Self {
+        self.number = number;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_station(mut self, station_number: Option<usize>) -> Self {
+        self.station_number = station_number;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_stage(mut self, stage_name: Option<&'a str>) -> Self {
+        self.stage_name = stage_name;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_attempts(mut self, attempt_count: usize) -> Self {
+        self.attempt_count = attempt_count;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_time_limit(mut self, time_limit_info: Option<TimeLimitInfo>) -> Self {
+        self.time_limit_info = time_limit_info;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_scramble_checker(mut self, needs_scramble_checker: bool) -> Self {
+        self.needs_scramble_checker = needs_scramble_checker;
+        self
+    }
+
     #[must_use]
     pub const fn event_id(&self) -> &'static str {
         self.event.code()
@@ -383,7 +501,31 @@ pub struct CoverSheet<'a> {
     pub total_group_cards: usize,
 }
 
-impl CoverSheet<'_> {
+impl<'a> CoverSheet<'a> {
+    /// Creates a new `CoverSheet`.
+    pub const fn new(
+        competition_name: &'a str,
+        event: WcaEvent,
+        round_number: RoundNumber,
+        group_number: GroupNumber,
+        total_group_cards: usize,
+    ) -> Self {
+        Self {
+            competition_name,
+            event,
+            round_number,
+            group_number,
+            stage_name: None,
+            total_group_cards,
+        }
+    }
+
+    #[must_use]
+    pub const fn with_stage(mut self, stage_name: Option<&'a str>) -> Self {
+        self.stage_name = stage_name;
+        self
+    }
+
     #[must_use]
     pub const fn event_id(&self) -> &'static str {
         self.event.code()
@@ -409,6 +551,27 @@ pub enum ScorecardItem<'a> {
     Empty,
 }
 
+impl<'a> From<Scorecard<'a>> for ScorecardItem<'a> {
+    #[inline]
+    fn from(sc: Scorecard<'a>) -> Self {
+        Self::Scorecard(sc)
+    }
+}
+
+impl<'a> From<BlankScorecard<'a>> for ScorecardItem<'a> {
+    #[inline]
+    fn from(blank: BlankScorecard<'a>) -> Self {
+        Self::Blank(blank)
+    }
+}
+
+impl<'a> From<CoverSheet<'a>> for ScorecardItem<'a> {
+    #[inline]
+    fn from(cover: CoverSheet<'a>) -> Self {
+        Self::CoverSheet(cover)
+    }
+}
+
 #[cfg(test)]
 impl Default for Scorecard<'static> {
     fn default() -> Self {
@@ -423,6 +586,7 @@ impl Default for Scorecard<'static> {
             competitor: Competitor::simple("Alice"),
             attempt_count: 5,
             time_limit_info: None,
+            needs_scramble_checker: false,
         }
     }
 }
@@ -443,73 +607,22 @@ impl<'a> ScorecardItem<'a> {
         matches!(self, Self::Empty)
     }
 
-    /// Creates a competitor scorecard item for an open round.
-    #[allow(clippy::too_many_arguments)]
-    pub fn scorecard(
-        competition_name: &'a str,
-        event: WcaEvent,
-        round_number: RoundNumber,
-        group_number: GroupNumber,
-        stage_name: Option<&'a str>,
-        competitor: Competitor<'a>,
-        station_number: Option<usize>,
-        attempt_count: usize,
-        time_limit_info: Option<TimeLimitInfo>,
-    ) -> Self {
-        Self::Scorecard(Scorecard {
-            number: 0,
-            station_number,
-            competition_name,
-            event,
-            round_number,
-            group_number,
-            stage_name,
-            competitor,
-            attempt_count,
-            time_limit_info,
-        })
+    /// Creates a competitor scorecard item from a `Scorecard`.
+    #[must_use]
+    pub const fn scorecard(card: Scorecard<'a>) -> Self {
+        Self::Scorecard(card)
     }
 
-    /// Creates a cover sheet item to precede a group's scorecards.
-    pub fn cover_sheet(
-        competition_name: &'a str,
-        event: WcaEvent,
-        round_number: RoundNumber,
-        group_number: GroupNumber,
-        stage_name: Option<&'a str>,
-        total_group_cards: usize,
-    ) -> Self {
-        Self::CoverSheet(CoverSheet {
-            competition_name,
-            event,
-            round_number,
-            group_number,
-            stage_name,
-            total_group_cards,
-        })
+    /// Creates a cover sheet item from a `CoverSheet`.
+    #[must_use]
+    pub const fn cover_sheet(sheet: CoverSheet<'a>) -> Self {
+        Self::CoverSheet(sheet)
     }
 
-    /// Creates a blank scorecard item for a subsequent round.
-    pub fn blank(
-        competition_name: &'a str,
-        event: WcaEvent,
-        round_number: RoundNumber,
-        group_number: GroupNumber,
-        stage_name: Option<&'a str>,
-        attempt_count: usize,
-        time_limit_info: Option<TimeLimitInfo>,
-    ) -> Self {
-        Self::Blank(BlankScorecard {
-            number: 0,
-            station_number: None,
-            competition_name,
-            event,
-            round_number,
-            group_number,
-            stage_name,
-            attempt_count,
-            time_limit_info,
-        })
+    /// Creates a blank scorecard item from a `BlankScorecard`.
+    #[must_use]
+    pub const fn blank(card: BlankScorecard<'a>) -> Self {
+        Self::Blank(card)
     }
 
     /// Creates an empty space item used to pad page grids so that groups start on a new page.

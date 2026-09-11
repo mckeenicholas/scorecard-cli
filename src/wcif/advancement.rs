@@ -114,62 +114,66 @@ mod tests {
 
     fn make_test_comp() -> Competition {
         Competition {
-            format_version: Some("1.0".to_string()),
-            id: "TestComp".to_string(),
-            name: "Test Competition".to_string(),
+            format_version: Some("1.0".to_owned()),
+            id: "TestComp".to_owned(),
+            name: "Test Competition".to_owned(),
             short_name: None,
             persons: vec![
                 Person {
                     registrant_id: NonZeroUsize::new(1),
-                    name: "Competitor 1".to_string(),
+                    name: "Competitor 1".to_owned(),
                     wca_id: None,
                     country_iso2: None,
                     registration: Some(Registration {
                         id: NonZeroUsize::new(1),
-                        status: Some("accepted".to_string()),
-                        event_ids: vec!["333".to_string()],
+                        status: Some("accepted".to_owned()),
+                        event_ids: vec!["333".to_owned()],
                         is_competing: true,
                     }),
                     assignments: vec![],
+                    personal_bests: vec![],
                 },
                 Person {
                     registrant_id: NonZeroUsize::new(2),
-                    name: "Competitor 2".to_string(),
+                    name: "Competitor 2".to_owned(),
                     wca_id: None,
                     country_iso2: None,
                     registration: Some(Registration {
                         id: NonZeroUsize::new(2),
-                        status: Some("accepted".to_string()),
-                        event_ids: vec!["333".to_string()],
+                        status: Some("accepted".to_owned()),
+                        event_ids: vec!["333".to_owned()],
                         is_competing: true,
                     }),
                     assignments: vec![],
+                    personal_bests: vec![],
                 },
                 Person {
                     registrant_id: NonZeroUsize::new(3),
-                    name: "Competitor 3".to_string(),
+                    name: "Competitor 3".to_owned(),
                     wca_id: None,
                     country_iso2: None,
                     registration: Some(Registration {
                         id: NonZeroUsize::new(3),
-                        status: Some("accepted".to_string()),
-                        event_ids: vec!["333".to_string()],
+                        status: Some("accepted".to_owned()),
+                        event_ids: vec!["333".to_owned()],
                         is_competing: true,
                     }),
                     assignments: vec![],
+                    personal_bests: vec![],
                 },
                 Person {
                     registrant_id: NonZeroUsize::new(4),
-                    name: "Competitor 4".to_string(),
+                    name: "Competitor 4".to_owned(),
                     wca_id: None,
                     country_iso2: None,
                     registration: Some(Registration {
                         id: NonZeroUsize::new(4),
-                        status: Some("accepted".to_string()),
-                        event_ids: vec!["333".to_string()],
+                        status: Some("accepted".to_owned()),
+                        event_ids: vec!["333".to_owned()],
                         is_competing: true,
                     }),
                     assignments: vec![],
+                    personal_bests: vec![],
                 },
             ],
             events: vec![],
@@ -182,22 +186,22 @@ mod tests {
     fn test_advancement_ranking() {
         let comp = make_test_comp(); // 4 competitors
         let event = Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![
                 Round {
-                    id: "333-r1".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r1".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: Some(AdvancementCondition {
-                        condition_type: "ranking".to_string(),
+                        condition_type: "ranking".to_owned(),
                         value: Some(3),
                     }),
                     scramble_group_count: 1,
                 },
                 Round {
-                    id: "333-r2".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r2".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: None,
@@ -214,22 +218,22 @@ mod tests {
 
         // When ranking limit exceeds pool size, cap at pool size
         let event_over = Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![
                 Round {
-                    id: "333-r1".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r1".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: Some(AdvancementCondition {
-                        condition_type: "ranking".to_string(),
+                        condition_type: "ranking".to_owned(),
                         value: Some(12),
                     }),
                     scramble_group_count: 1,
                 },
                 Round {
-                    id: "333-r2".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r2".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: None,
@@ -249,22 +253,22 @@ mod tests {
     fn test_advancement_percent() {
         let comp = make_test_comp();
         let event = Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![
                 Round {
-                    id: "333-r1".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r1".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: Some(AdvancementCondition {
-                        condition_type: "percent".to_string(),
+                        condition_type: "percent".to_owned(),
                         value: Some(50),
                     }),
                     scramble_group_count: 1,
                 },
                 Round {
-                    id: "333-r2".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r2".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: None,
@@ -285,19 +289,19 @@ mod tests {
     fn test_advancement_fallbacks() {
         let comp = make_test_comp();
         let event_no_condition = Event {
-            id: "333".to_string(),
+            id: "333".to_owned(),
             rounds: vec![
                 Round {
-                    id: "333-r1".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r1".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: None,
                     scramble_group_count: 1,
                 },
                 Round {
-                    id: "333-r2".to_string(),
-                    format: Some("a".to_string()),
+                    id: "333-r2".to_owned(),
+                    format: Some("a".to_owned()),
                     time_limit: None,
                     cutoff: None,
                     advancement_condition: None,
