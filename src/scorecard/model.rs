@@ -293,13 +293,13 @@ impl<'a> Competitor<'a> {
 
 /// Helper to truncate competition name to `max_chars` with an ellipsis if necessary.
 pub fn truncate_comp_name(name: &str, max_chars: usize) -> Cow<'_, str> {
-    if name.chars().count() > max_chars {
+    if name.len() <= max_chars || name.chars().count() <= max_chars {
+        Cow::Borrowed(name)
+    } else {
         let mut s = String::with_capacity(max_chars);
         s.extend(name.chars().take(max_chars.saturating_sub(3)));
         s.push_str("...");
         Cow::Owned(s)
-    } else {
-        Cow::Borrowed(name)
     }
 }
 
@@ -699,22 +699,17 @@ impl PlannedRoundSummary {
 #[derive(Debug, Clone, Default)]
 pub struct ScorecardPlan<'a> {
     pub(crate) items: Vec<ScorecardItem<'a>>,
-    pub summaries: Vec<PlannedRoundSummary>,
-    pub notes: Vec<String>,
+    pub(crate) summaries: Vec<PlannedRoundSummary>,
+    pub(crate) notes: Vec<String>,
 }
 
-impl<'a> ScorecardPlan<'a> {
+impl ScorecardPlan<'_> {
     pub fn new(notes: Vec<String>) -> Self {
         Self {
             items: Vec::new(),
             summaries: Vec::new(),
             notes,
         }
-    }
-
-    #[must_use]
-    pub fn items(&self) -> &[ScorecardItem<'a>] {
-        &self.items
     }
 
     pub fn is_empty(&self) -> bool {

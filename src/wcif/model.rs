@@ -32,7 +32,7 @@ impl WcaId {
     /// Returns the WCA ID as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
-        str::from_utf8(&self.0).unwrap_or("")
+        str::from_utf8(&self.0).expect("ASCII bytes are valid UTF-8")
     }
 }
 
@@ -59,14 +59,6 @@ impl PartialEq<str> for WcaId {
 impl PartialEq<&str> for WcaId {
     fn eq(&self, other: &&str) -> bool {
         self.as_str() == *other
-    }
-}
-
-impl TryFrom<[u8; 10]> for WcaId {
-    type Error = ();
-
-    fn try_from(bytes: [u8; 10]) -> Result<Self, Self::Error> {
-        Self::new(bytes).ok_or(())
     }
 }
 
@@ -167,7 +159,7 @@ impl CountryIso2 {
     /// Creates a `CountryIso2` from a 2-byte ASCII array. Returns `None` if not valid ASCII.
     #[must_use]
     pub const fn new(bytes: [u8; 2]) -> Option<Self> {
-        if bytes[0].is_ascii() && bytes[1].is_ascii() {
+        if bytes.is_ascii() {
             Some(Self(bytes))
         } else {
             None
@@ -190,7 +182,7 @@ impl CountryIso2 {
     /// Returns the country code as a string slice.
     #[inline]
     pub fn as_str(&self) -> &str {
-        str::from_utf8(&self.0).unwrap_or("")
+        str::from_utf8(&self.0).expect("ASCII bytes are valid UTF-8")
     }
 }
 
@@ -217,14 +209,6 @@ impl PartialEq<str> for CountryIso2 {
 impl PartialEq<&str> for CountryIso2 {
     fn eq(&self, other: &&str) -> bool {
         self.as_str() == *other
-    }
-}
-
-impl TryFrom<[u8; 2]> for CountryIso2 {
-    type Error = ();
-
-    fn try_from(bytes: [u8; 2]) -> Result<Self, Self::Error> {
-        Self::new(bytes).ok_or(())
     }
 }
 

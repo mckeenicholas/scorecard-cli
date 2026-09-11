@@ -11,9 +11,7 @@ use super::model::{
     Scorecard, ScorecardItem, ScorecardPlan, TimeLimitInfo,
 };
 use crate::options::CoverSheetBy;
-use crate::wcif::{
-    AdvancementCalculator, Competition, Event, Person, Round, ScheduledActivityInfo,
-};
+use crate::wcif::{AdvancementCalculator, Competition, Event, Person, Round};
 
 /// Generation target representing an event and round to produce scorecards for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,48 +55,89 @@ fn parse_event_arg(arg: &str) -> Option<ParsedEventArg> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ResolvedActivity<'a> {
+    parsed: Option<ActivityCode>,
+    raw: &'a str,
+    room_name: Option<&'a str>,
+}
+
+type ActivityMap<'a> = FxHashMap<usize, ResolvedActivity<'a>>;
+
+fn resolve_activity_map(comp: &Competition) -> ActivityMap<'_> {
+    comp.build_activity_schedule_map()
+        .into_iter()
+        .map(|(id, info)| {
+            (
+                id,
+                ResolvedActivity {
+                    parsed: ActivityCode::parse(info.activity_code),
+                    raw: info.activity_code,
+                    room_name: info.room_name,
+                },
+            )
+        })
+        .collect()
+}
+
 #[inline]
-fn matches_round_activity(activity_code: &str, round_target: ActivityCode) -> bool {
-    if let Some(code) = ActivityCode::parse(activity_code) {
+fn matches_round_activity(activity: &ResolvedActivity<'_>, round_target: ActivityCode) -> bool {
+    if let Some(code) = activity.parsed {
         code.matches_round(round_target.event, round_target.round_number)
     } else {
-        activity_code
-            .strip_prefix(round_target.event.code())
-            .and_then(|rem| rem.strip_prefix("-r"))
-            .and_then(|rem| {
-                let (r_str, group_rem) = rem.split_once("-g").unwrap_or((rem, ""));
-                (r_str.parse::<RoundNumber>().ok() == Some(round_target.round_number))
-                    .then_some(group_rem)
-            })
-            .is_some_and(|rem| rem.is_empty() || rem.starts_with("-g"))
+        matches_round_activity_raw(activity.raw, round_target)
     }
 }
 
 #[inline]
-fn extract_group_number(activity_code: &str, round_target: ActivityCode) -> Option<GroupNumber> {
-    if let Some(code) = ActivityCode::parse(activity_code) {
-        code.matches_round(round_target.event, round_target.round_number)
-            .then(|| code.group_or_default())
+fn matches_round_activity_raw(activity_code: &str, round_target: ActivityCode) -> bool {
+    activity_code
+        .strip_prefix(round_target.event.code())
+        .and_then(|rem| rem.strip_prefix("-r"))
+        .and_then(|rem| {
+            let (r_str, group_rem) = rem.split_once("-g").unwrap_or((rem, ""));
+            (r_str.parse::<RoundNumber>().ok() == Some(round_target.round_number))
+                .then_some(group_rem)
+        })
+        .is_some_and(|rem| rem.is_empty() || rem.starts_with("-g"))
+}
+
+#[inline]
+fn extract_group_number(
+    activity: &ResolvedActivity<'_>,
+    round_target: ActivityCode,
+) -> Option<GroupNumber> {
+    if let Some(code) = activity.parsed {
+        return code
+            .matches_round(round_target.event, round_target.round_number)
+            .then(|| code.group_or_default());
+    }
+    extract_group_number_raw(activity.raw, round_target)
+}
+
+#[inline]
+fn extract_group_number_raw(
+    activity_code: &str,
+    round_target: ActivityCode,
+) -> Option<GroupNumber> {
+    let event_rem = activity_code.strip_prefix(round_target.event.code())?;
+    let rem = event_rem.strip_prefix("-r")?;
+    let (r_str, group_rem) = rem.split_once("-g").unwrap_or((rem, ""));
+    if r_str.parse::<RoundNumber>().ok() != Some(round_target.round_number) {
+        return None;
+    }
+    if let Some(stripped) = group_rem.strip_prefix("-g") {
+        Some(stripped.parse().unwrap_or(1))
+    } else if group_rem.is_empty() {
+        Some(1)
     } else {
-        let event_rem = activity_code.strip_prefix(round_target.event.code())?;
-        let rem = event_rem.strip_prefix("-r")?;
-        let (r_str, group_rem) = rem.split_once("-g").unwrap_or((rem, ""));
-        if r_str.parse::<RoundNumber>().ok() != Some(round_target.round_number) {
-            return None;
-        }
-        if let Some(stripped) = group_rem.strip_prefix("-g") {
-            Some(stripped.parse().unwrap_or(1))
-        } else if group_rem.is_empty() {
-            Some(1)
-        } else {
-            None
-        }
+        None
     }
 }
 
 fn has_competitor_assignments(
     comp: &Competition,
-    activity_map: &FxHashMap<usize, ScheduledActivityInfo<'_>>,
+    activity_map: &ActivityMap<'_>,
     round_target: ActivityCode,
 ) -> bool {
     comp.persons
@@ -108,7 +147,7 @@ fn has_competitor_assignments(
             (assign.code.as_deref() == Some("competitor") || assign.code.is_none())
                 && activity_map
                     .get(&assign.activity_id)
-                    .is_some_and(|info| matches_round_activity(info.activity_code, round_target))
+                    .is_some_and(|info| matches_round_activity(info, round_target))
         })
 }
 
@@ -166,7 +205,7 @@ fn find_event_and_round(
 
 fn resolve_assignment<'a>(
     person: &Person,
-    activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
+    activity_map: &ActivityMap<'a>,
     round_target: ActivityCode,
 ) -> Option<(GroupNumber, Option<usize>, Option<&'a str>)> {
     person.assignments.iter().find_map(|assign| {
@@ -175,7 +214,7 @@ fn resolve_assignment<'a>(
             return None;
         }
         let info = activity_map.get(&assign.activity_id)?;
-        let group_num = extract_group_number(info.activity_code, round_target)?;
+        let group_num = extract_group_number(info, round_target)?;
         Some((group_num, assign.station_number, info.room_name))
     })
 }
@@ -229,24 +268,28 @@ pub fn should_print_scramble_checker_for_competitor(
         return false;
     }
     if config.scramble_checker_top_ranked {
-        let single_qualifies = person
-            .personal_bests
-            .iter()
-            .find(|pb| pb.event_id == event.id && pb.best_type == "single")
-            .and_then(|pb| pb.world_ranking)
-            .is_some_and(|wr| wr <= 50 && wr > 0);
-
-        let avg_qualifies = person
-            .personal_bests
-            .iter()
-            .find(|pb| pb.event_id == event.id && pb.best_type == "average")
-            .is_some_and(|pb| {
-                pb.world_ranking.is_some_and(|wr| wr <= 50 && wr > 0)
-                    || pb.national_ranking.is_some_and(|nr| nr <= 15 && nr > 0)
-            });
-
-        if single_qualifies || avg_qualifies {
-            return true;
+        let mut seen_single = false;
+        let mut seen_average = false;
+        let mut single_qualifies = false;
+        let mut avg_qualifies = false;
+        for pb in &person.personal_bests {
+            if pb.event_id != event.id {
+                continue;
+            }
+            if !seen_single && pb.best_type == "single" {
+                seen_single = true;
+                single_qualifies = pb.world_ranking.is_some_and(|wr| wr <= 50 && wr > 0);
+            } else if !seen_average && pb.best_type == "average" {
+                seen_average = true;
+                avg_qualifies = pb.world_ranking.is_some_and(|wr| wr <= 50 && wr > 0)
+                    || pb.national_ranking.is_some_and(|nr| nr <= 15 && nr > 0);
+            }
+            if single_qualifies || avg_qualifies {
+                return true;
+            }
+            if seen_single && seen_average {
+                break;
+            }
         }
     }
     if config.scramble_checker_final_rounds && round.is_final(event) {
@@ -279,7 +322,7 @@ struct RoundPlanningContext<'a, 'b> {
     event: &'a Event,
     round: &'a Round,
     attempt_count: usize,
-    activity_map: &'b FxHashMap<usize, ScheduledActivityInfo<'a>>,
+    activity_map: &'b ActivityMap<'a>,
     config: PlanConfig<'b>,
 }
 
@@ -317,26 +360,21 @@ fn collect_open_round_competitors<'a>(
         };
 
         count += 1;
+        let competitor = Competitor::from_person(
+            person,
+            ctx.config.print_one_name,
+            ctx.config.local_names_first,
+        );
         if sample_names.len() < 5 {
-            let (primary, local) = format_competitor_name(
-                &person.name,
-                ctx.config.print_one_name,
-                ctx.config.local_names_first,
-            );
-            sample_names.push(match local {
-                Some(loc) => format!("{primary} ({loc})"),
-                None => primary.to_owned(),
+            sample_names.push(match competitor.local_name {
+                Some(loc) => format!("{} ({loc})", competitor.name),
+                None => competitor.name.to_owned(),
             });
         }
 
         let needs_scramble_checker =
             should_print_scramble_checker_for_competitor(person, ctx.event, ctx.round, &ctx.config);
 
-        let competitor = Competitor::from_person(
-            person,
-            ctx.config.print_one_name,
-            ctx.config.local_names_first,
-        );
         let item = Scorecard::new(
             comp_name,
             ctx.target.round_id.event,
@@ -352,7 +390,7 @@ fn collect_open_round_competitors<'a>(
         .into();
         groups
             .entry((group_num, stage_name))
-            .or_default()
+            .or_insert_with(|| Vec::with_capacity(16))
             .push(item);
     }
 
@@ -467,7 +505,7 @@ fn plan_open_round<'a>(ctx: &RoundPlanningContext<'a, '_>, plan: &mut ScorecardP
 fn resolve_round_stage<'a>(ctx: &RoundPlanningContext<'a, '_>) -> Option<&'a str> {
     ctx.activity_map
         .values()
-        .find(|info| matches_round_activity(info.activity_code, ctx.target.activity_code()))
+        .find(|info| matches_round_activity(info, ctx.target.activity_code()))
         .and_then(|info| info.room_name)
 }
 
@@ -626,7 +664,7 @@ impl ScorecardPlanner {
 
     fn targets_for_event(
         comp: &Competition,
-        activity_map: &FxHashMap<usize, ScheduledActivityInfo<'_>>,
+        activity_map: &ActivityMap<'_>,
         event: &Event,
     ) -> impl Iterator<Item = GenerationTarget> {
         let opt_wca_event = WcaEvent::from_id(&event.id);
@@ -654,15 +692,15 @@ impl ScorecardPlanner {
         comp: &Competition,
         requested_events: &[S],
     ) -> (Vec<GenerationTarget>, Vec<String>) {
-        let activity_map = comp.build_activity_schedule_map();
+        let activity_map = resolve_activity_map(comp);
         Self::resolve_targets_with_map(comp, requested_events, &activity_map)
     }
 
     /// Resolves generation targets using a precomputed activity schedule map.
-    pub fn resolve_targets_with_map<S: AsRef<str>>(
+    fn resolve_targets_with_map<S: AsRef<str>>(
         comp: &Competition,
         requested_events: &[S],
-        activity_map: &FxHashMap<usize, ScheduledActivityInfo<'_>>,
+        activity_map: &ActivityMap<'_>,
     ) -> (Vec<GenerationTarget>, Vec<String>) {
         let mut notes = Vec::new();
 
@@ -716,10 +754,11 @@ impl ScorecardPlanner {
         requested_events: &[S],
         config: PlanConfig<'_>,
     ) -> Result<ScorecardPlan<'a>, PlannerError> {
-        let activity_map = comp.build_activity_schedule_map();
+        let activity_map = resolve_activity_map(comp);
         let (targets, notes) =
             Self::resolve_targets_with_map(comp, requested_events, &activity_map);
         let mut plan = ScorecardPlan::new(notes);
+        plan.items.reserve(comp.persons.len());
 
         for target in &targets {
             Self::plan_target_round(comp, *target, &activity_map, config, &mut plan)?;
@@ -741,7 +780,7 @@ impl ScorecardPlanner {
     fn plan_target_round<'a>(
         comp: &'a Competition,
         target: GenerationTarget,
-        activity_map: &FxHashMap<usize, ScheduledActivityInfo<'a>>,
+        activity_map: &ActivityMap<'a>,
         config: PlanConfig<'_>,
         plan: &mut ScorecardPlan<'a>,
     ) -> Result<(), PlannerError> {

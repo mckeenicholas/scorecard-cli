@@ -2,7 +2,9 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io::{Error as IoError, Write};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
+use printpdf::font::ParsedFont;
 use printpdf::ops::PdfPage;
 use printpdf::serialize::PdfSaveOptions;
 use printpdf::units::Mm;
@@ -12,8 +14,12 @@ use rayon::prelude::*;
 use super::font::FontResolver;
 use super::layout::{PageFormat, PageLayout};
 use super::renderer::ScorecardRenderer;
+use super::text::is_win_ansi;
 use crate::scorecard::ScorecardItem;
 use crate::wcif::Competition;
+
+/// Estimated PDF ops emitted per scorecard (text runs, table lines, fills).
+const OPS_PER_CARD: usize = 512;
 
 /// Error encountered during PDF generation or file serialization.
 #[derive(Debug)]
@@ -58,6 +64,7 @@ pub struct PdfGenerator {
     pub format: PageFormat,
     pub start_group_on_new_page: bool,
     pub font_path: Option<PathBuf>,
+    parsed_font: OnceLock<Option<ParsedFont>>,
 }
 
 impl PdfGenerator {
@@ -69,6 +76,7 @@ impl PdfGenerator {
             format: PageFormat::Group,
             start_group_on_new_page: false,
             font_path: None,
+            parsed_font: OnceLock::new(),
         }
     }
 
@@ -90,7 +98,17 @@ impl PdfGenerator {
             format,
             start_group_on_new_page,
             font_path,
+            parsed_font: OnceLock::new(),
         }
+    }
+
+    fn resolved_font(&self, cards: &[ScorecardItem<'_>]) -> Option<&ParsedFont> {
+        if self.font_path.is_none() && !cards_need_custom_font(cards) {
+            return None;
+        }
+        self.parsed_font
+            .get_or_init(|| FontResolver::resolve(self.font_path.as_deref()))
+            .as_ref()
     }
 
     /// Generates a PDF containing all scorecards and streams directly to any Write destination (e.g. `BufWriter`<File>).
@@ -102,8 +120,7 @@ impl PdfGenerator {
         writer: &mut W,
     ) -> Result<usize, PdfGenerationError> {
         let mut doc = PdfDocument::new(&comp.name);
-        let custom_font = FontResolver::resolve(self.font_path.as_deref());
-        let font_id = custom_font.as_ref().map(|f| doc.add_font(f));
+        let font_id = self.resolved_font(cards).map(|font| doc.add_font(font));
         let pages = self.build_pages(cards, font_id.as_ref());
         let page_count = pages.len();
         doc.pages = pages;
@@ -117,7 +134,7 @@ impl PdfGenerator {
         cards: &[ScorecardItem<'_>],
         font_id: Option<&FontId>,
     ) -> Vec<PdfPage> {
-        if self.format == PageFormat::Stacked && self.layout.cards_per_page() > 1 {
+        if self.format == PageFormat::Stacked && self.layout.cards_per_page > 1 {
             self.build_stacked_pages(cards, font_id)
         } else {
             self.build_grouped_pages(cards, font_id)
@@ -132,13 +149,13 @@ impl PdfGenerator {
     ) -> Vec<PdfPage> {
         let layout = self.layout;
         let total_cards = cards.len();
-        let k = layout.cards_per_page();
+        let k = layout.cards_per_page;
         let total_pages = total_cards.div_ceil(k);
 
         (0..total_pages)
             .into_par_iter()
             .map(|page_idx| {
-                let mut ops = Vec::with_capacity(256);
+                let mut ops = Vec::with_capacity(k * OPS_PER_CARD);
                 for slot in 0..k {
                     let card_idx = slot * total_pages + page_idx;
                     if card_idx < total_cards {
@@ -147,7 +164,7 @@ impl PdfGenerator {
                         ScorecardRenderer::draw_card(&mut ops, card, rect, font_id);
                     }
                 }
-                PdfPage::new(Mm(layout.page_w_mm()), Mm(layout.page_h_mm()), ops)
+                PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
             })
             .collect()
     }
@@ -159,25 +176,22 @@ impl PdfGenerator {
         font_id: Option<&FontId>,
     ) -> Vec<PdfPage> {
         let layout = self.layout;
-        let padded_cards = (self.start_group_on_new_page && layout.cards_per_page() > 1)
-            .then(|| Self::pad_groups_to_page_boundaries(cards, layout.cards_per_page()));
+        let k = layout.cards_per_page;
+        let padded_cards = (self.start_group_on_new_page && k > 1)
+            .then(|| Self::pad_groups_to_page_boundaries(cards, k));
         let effective_cards = padded_cards.as_deref().unwrap_or(cards);
 
         effective_cards
-            .par_chunks(layout.cards_per_page())
+            .par_chunks(k)
             .map(|chunk| {
-                let mut ops = Vec::with_capacity(if layout.cards_per_page() == 1 {
-                    64
-                } else {
-                    256
-                });
+                let mut ops = Vec::with_capacity(chunk.len() * OPS_PER_CARD);
 
                 for (idx, card) in chunk.iter().enumerate() {
                     let rect = layout.card_rect(idx);
                     ScorecardRenderer::draw_card(&mut ops, card, rect, font_id);
                 }
 
-                PdfPage::new(Mm(layout.page_w_mm()), Mm(layout.page_h_mm()), ops)
+                PdfPage::new(Mm(layout.page_w_mm), Mm(layout.page_h_mm), ops)
             })
             .collect()
     }
@@ -252,6 +266,31 @@ impl PdfGenerator {
         self.generate_to_writer(comp, cards, &mut buffer)?;
         Ok(buffer)
     }
+}
+
+#[inline]
+fn text_needs_custom_font(s: &str) -> bool {
+    s.chars().any(|c| !is_win_ansi(c))
+}
+
+fn cards_need_custom_font(cards: &[ScorecardItem<'_>]) -> bool {
+    cards.iter().any(|card| match card {
+        ScorecardItem::Scorecard(sc) => {
+            text_needs_custom_font(sc.competition_name)
+                || sc.stage_name.is_some_and(text_needs_custom_font)
+                || text_needs_custom_font(sc.competitor.name)
+                || sc.competitor.local_name.is_some_and(text_needs_custom_font)
+        }
+        ScorecardItem::Blank(b) => {
+            text_needs_custom_font(b.competition_name)
+                || b.stage_name.is_some_and(text_needs_custom_font)
+        }
+        ScorecardItem::CoverSheet(c) => {
+            text_needs_custom_font(c.competition_name)
+                || c.stage_name.is_some_and(text_needs_custom_font)
+        }
+        ScorecardItem::Empty => false,
+    })
 }
 
 #[cfg(test)]
@@ -411,7 +450,7 @@ mod tests {
         )
         .unwrap();
         let layout = PageLayout::new(PaperSize::A4);
-        let padded = PdfGenerator::pad_groups_to_page_boundaries(&plan, layout.cards_per_page());
+        let padded = PdfGenerator::pad_groups_to_page_boundaries(&plan, layout.cards_per_page);
 
         // Helper to access page p (1-indexed, 4 cards per page)
         let page = |p: usize| &padded[(p - 1) * 4..p * 4];

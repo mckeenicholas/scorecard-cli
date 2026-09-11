@@ -113,7 +113,9 @@ pub fn partition_scorecards<'a>(
             BTreeMap::<SplitKey<'a>, Vec<ScorecardItem<'a>>>::new(),
             |mut acc, card| {
                 let key = build_split_key(card, has_stage, has_event, has_group);
-                acc.entry(key).or_default().push(*card);
+                acc.entry(key)
+                    .or_insert_with(|| Vec::with_capacity(64))
+                    .push(*card);
                 acc
             },
         )

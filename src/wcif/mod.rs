@@ -5,8 +5,7 @@ pub mod model;
 pub use advancement::AdvancementCalculator;
 pub use loader::{WcifLoadError, WcifLoader, expand_tilde};
 pub use model::{
-    Competition, Cutoff, Event, GroupifierCompetitionConfig, Person, Round, ScheduledActivityInfo,
-    TimeLimit, WcaId,
+    Competition, Cutoff, Event, GroupifierCompetitionConfig, Person, Round, TimeLimit, WcaId,
 };
 
 #[cfg(test)]

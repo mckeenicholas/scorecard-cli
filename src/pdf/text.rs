@@ -75,7 +75,10 @@ impl TextDrawer {
             return;
         }
 
-        let text_w = Self::estimate_width(spec.text, spec.font_size, spec.bold);
+        let text_w = match spec.align {
+            TextAlign::Left => 0.0,
+            TextAlign::Center => Self::estimate_width(spec.text, spec.font_size, spec.bold),
+        };
         let cur_x = Self::compute_aligned_x(spec.align, spec.cell_x, spec.cell_w, text_w);
         let font = Self::resolve_font(spec.bold);
 
